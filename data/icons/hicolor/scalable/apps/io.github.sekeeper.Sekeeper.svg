@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <title>Sekeeper</title>
+  <desc>A pale lock with a golden keyhole on a blue and teal rounded tile.</desc>
+  <defs>
+    <linearGradient id="tile" x1="20" y1="10" x2="110" y2="122" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#173e66"/>
+      <stop offset="1" stop-color="#087e85"/>
+    </linearGradient>
+    <linearGradient id="body" x1="43" y1="48" x2="87" y2="101" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#fffdf5"/>
+      <stop offset="1" stop-color="#d6f1ee"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="59" y1="64" x2="71" y2="91" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#ffe1a0"/>
+      <stop offset="1" stop-color="#f3b34c"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="12" width="112" height="110" rx="28" fill="#063d50"/>
+  <rect x="8" y="6" width="112" height="112" rx="28" fill="url(#tile)"/>
+  <path d="M36 7h56a27 27 0 0 1 24 15C90 12 55 15 14 51V34A28 28 0 0 1 36 7Z" fill="#fff" opacity=".06"/>
+  <path d="M44 54V44a20 20 0 0 1 40 0v10" fill="none" stroke="#063e57" stroke-width="12" stroke-linecap="round" opacity=".45" transform="translate(0 4)"/>
+  <path d="M44 54V44a20 20 0 0 1 40 0v10" fill="none" stroke="#d6f1ee" stroke-width="10" stroke-linecap="round"/>
+  <path d="M48 43a16 16 0 0 1 16-16" fill="none" stroke="#fffdf5" stroke-width="3" stroke-linecap="round" opacity=".75"/>
+  <rect x="32" y="52" width="64" height="52" rx="15" fill="#053c50" opacity=".4"/>
+  <rect x="32" y="48" width="64" height="52" rx="15" fill="url(#body)"/>
+  <path d="M47 51h34" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" opacity=".85"/>
+  <path d="M64 61a10 10 0 0 0-6 18l-2 10h16l-2-10a10 10 0 0 0-6-18Z" fill="#123f58"/>
+  <path d="M64 64a7 7 0 0 0-3 13.3L59 86h10l-2-8.7A7 7 0 0 0 64 64Z" fill="url(#gold)"/>
+  <circle cx="62" cy="69" r="2" fill="#fff7dc" opacity=".9"/>
+</svg>

@@ -1,0 +1,16 @@
+[Desktop Entry]
+Type=Application
+Name=Sekeeper
+GenericName=Password Manager
+GenericName[it]=Gestore di password
+Comment=Keep your credentials in an encrypted vault with a password and key file
+Comment[it]=Custodisci le credenziali in un vault cifrato con password e file chiave
+Exec=sekeeper
+TryExec=sekeeper
+Icon=io.github.sekeeper.Sekeeper
+Terminal=false
+Categories=Utility;
+Keywords=password;vault;credentials;key;S3;
+Keywords[it]=password;vault;credenziali;chiave;S3;
+StartupNotify=true
+DBusActivatable=false

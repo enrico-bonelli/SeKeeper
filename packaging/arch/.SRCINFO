@@ -1,0 +1,19 @@
+pkgbase = sekeeper
+	pkgdesc = GTK4 password manager with an encrypted vault, key file and optional AWS S3 sync
+	pkgver = 0.1.0
+	pkgrel = 1
+	arch = x86_64
+	license = MIT
+	checkdepends = desktop-file-utils
+	makedepends = cargo
+	makedepends = pkgconf
+	depends = gtk4>=4.6
+	depends = glib2
+	depends = glibc
+	depends = libgcc
+	optdepends = curl: optional AWS S3 synchronization
+	optdepends = libsecret: store AWS credentials with secret-tool; requires a Secret Service keyring
+	options = !lto
+	options = !debug
+
+pkgname = sekeeper

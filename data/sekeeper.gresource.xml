@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gresources>
+  <gresource prefix="/io/github/sekeeper/Sekeeper">
+    <file>icons/hicolor/scalable/apps/io.github.sekeeper.Sekeeper.svg</file>
+  </gresource>
+</gresources>

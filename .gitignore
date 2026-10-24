@@ -1,0 +1,47 @@
+# Rust: Cargo.lock is intentionally tracked for reproducible application builds.
+/target/
+**/target/
+
+# Arch / makepkg output (the PKGBUILD and .SRCINFO remain tracked).
+/packaging/arch/src/
+/packaging/arch/pkg/
+*.pkg.tar.*
+*.src.tar.*
+
+# Local tools, credentials and editor state.
+/.agents/
+/.codex/
+/.aws/
+/.cargo/credentials
+/.cargo/credentials.toml
+/.config/
+/.idea/
+/.vscode/
+.env
+.env.*
+!.env.example
+.DS_Store
+*.swp
+*.swo
+*~
+*.log
+*.log.*
+*.tmp
+
+# Personal vaults, cloud configuration and key files.
+/vault
+/vault.*
+vault.s3.json
+vault.s3-cache/
+vault.history-*/
+vault.v[0-9].bak.*
+vault.v[0-9].before-restore
+*.sek
+*.key
+*.keyx
+*.pem
+*.p12
+*.pfx
+
+# This is public test data required by the test suite, not a personal key.
+!/tests/fixtures/public-test.key

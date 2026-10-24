@@ -1,0 +1,48 @@
+# Build from a complete checkout: cd packaging/arch && makepkg -si
+# Local source files are copied explicitly, without Git or a remote repository.
+pkgname=sekeeper
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='GTK4 password manager with an encrypted vault, key file and optional AWS S3 sync'
+arch=('x86_64')
+license=('MIT')
+depends=('gtk4>=4.6' 'glib2' 'glibc' 'libgcc')
+makedepends=('cargo' 'pkgconf')
+checkdepends=('desktop-file-utils')
+optdepends=(
+  'curl: optional AWS S3 synchronization'
+  'libsecret: store AWS credentials with secret-tool; requires a Secret Service keyring'
+)
+options=('!lto' '!debug')
+
+prepare() {
+  local _project_root="$(cd "$startdir/../.." && pwd)"
+  local _source_dir="$srcdir/$pkgname-$pkgver"
+  # Only the generated source snapshot is replaced; the checkout is untouched.
+  rm -rf -- "$_source_dir"
+  install -d "$_source_dir"
+  cp -a -- "$_project_root"/{Cargo.toml,Cargo.lock,build.rs,LICENSE,README.md,src,tests,data} "$_source_dir/"
+  cd "$_source_dir"
+  cargo fetch --locked --target "${CARCH}-unknown-linux-gnu"
+}
+
+build() {
+  cd "$srcdir/$pkgname-$pkgver"
+  # Arch's C flags do not configure Rust; Cargo.toml enables release LTO itself.
+  cargo build --frozen --release --target-dir "${CARGO_TARGET_DIR:-$srcdir/target}"
+}
+
+check() {
+  cd "$srcdir/$pkgname-$pkgver"
+  desktop-file-validate data/io.github.sekeeper.Sekeeper.desktop
+  cargo test --frozen --all-targets --target-dir "${CARGO_TARGET_DIR:-$srcdir/target}"
+}
+
+package() {
+  cd "$srcdir/$pkgname-$pkgver"
+  install -Dm755 "${CARGO_TARGET_DIR:-$srcdir/target}/release/sekeeper" "$pkgdir/usr/bin/sekeeper"
+  install -Dm644 data/io.github.sekeeper.Sekeeper.desktop "$pkgdir/usr/share/applications/io.github.sekeeper.Sekeeper.desktop"
+  install -Dm644 data/icons/hicolor/scalable/apps/io.github.sekeeper.Sekeeper.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/io.github.sekeeper.Sekeeper.svg"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+}
