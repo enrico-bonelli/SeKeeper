@@ -1,6 +1,6 @@
 pkgbase = sekeeper
 	pkgdesc = GTK4 password manager with an encrypted vault, key file and optional AWS S3 sync
-	pkgver = 0.1.0
+	pkgver = 0.3.0
 	pkgrel = 1
 	arch = x86_64
 	license = MIT

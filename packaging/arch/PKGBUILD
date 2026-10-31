@@ -1,7 +1,7 @@
 # Build from a complete checkout: cd packaging/arch && makepkg -si
 # Local source files are copied explicitly, without Git or a remote repository.
 pkgname=sekeeper
-pkgver=0.1.0
+pkgver=0.3.0
 pkgrel=1
 pkgdesc='GTK4 password manager with an encrypted vault, key file and optional AWS S3 sync'
 arch=('x86_64')

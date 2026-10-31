@@ -179,6 +179,28 @@ impl Credentials {
         }
         Ok(())
     }
+    /// Removes a retired keyring item once a new one is active.
+    pub fn clear(config: &Config) -> Result<()> {
+        config.validate()?;
+        let mut command = helpers::command(helpers::Program::SecretTool)?;
+        let status = command
+            .args([
+                "clear",
+                "application",
+                "sekeeper",
+                "credential",
+                &config.credential_id,
+            ])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map_err(|_| error("secret-tool non disponibile: installa libsecret"))?;
+        if !status.success() {
+            return Err(error("impossibile rimuovere le vecchie credenziali S3"));
+        }
+        Ok(())
+    }
     pub fn load(config: &Config) -> Result<Self> {
         let mut command = helpers::command(helpers::Program::SecretTool)?;
         let output = command
@@ -210,6 +232,7 @@ pub trait RemoteStore {
     fn list(&mut self) -> Result<Vec<String>>;
     fn get(&mut self, id: &str) -> Result<Vec<u8>>;
     fn put(&mut self, id: &str, bytes: &[u8]) -> Result<()>;
+    fn delete(&mut self, id: &str) -> Result<()>;
 }
 
 pub struct S3 {
@@ -247,6 +270,7 @@ impl S3 {
             key,
             query,
             upload,
+            false,
         )
     }
 
@@ -258,7 +282,7 @@ impl S3 {
         query: &str,
         upload: Option<&[u8]>,
     ) -> Result<(u16, Vec<u8>)> {
-        self.request_command(helpers::testing_command(program), key, query, upload)
+        self.request_command(helpers::testing_command(program), key, query, upload, false)
     }
 
     fn request_command(
@@ -267,6 +291,7 @@ impl S3 {
         key: &str,
         query: &str,
         upload: Option<&[u8]>,
+        delete: bool,
     ) -> Result<(u16, Vec<u8>)> {
         let remaining = self
             .deadline
@@ -318,6 +343,9 @@ impl S3 {
             &self.url(key, query),
         ]);
         let upload = upload.map(helpers::SealedUpload::new).transpose()?;
+        if delete {
+            command.args(["--request", "DELETE"]);
+        }
         if let Some(upload) = &upload {
             command.args([
                 "--header",
@@ -420,6 +448,19 @@ impl RemoteStore for S3 {
             return Err(error(
                 "S3 contiene una copia diversa con lo stesso identificativo: nessun file è stato sovrascritto",
             ));
+        }
+        check_status(status)
+    }
+    fn delete(&mut self, id: &str) -> Result<()> {
+        let (status, _) = self.request_command(
+            helpers::command(helpers::Program::Curl)?,
+            &self.key(id)?,
+            "",
+            None,
+            true,
+        )?;
+        if status == 404 {
+            return Ok(());
         }
         check_status(status)
     }

@@ -1,10 +1,10 @@
 use rand::{RngCore, rngs::OsRng};
-use std::ffi::{CString, OsStr, OsString};
+use std::ffi::{CStr, CString, OsStr, OsString};
 use std::fs::{self, File, TryLockError};
 use std::io::{self, Read, Write};
 use std::os::fd::{AsRawFd, FromRawFd};
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::{MetadataExt, PermissionsExt};
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Component, Path, PathBuf};
 
 #[derive(Debug)]
@@ -183,6 +183,24 @@ impl PrivateDir {
         self.regular(name, libc::O_RDONLY)?.sync_all()
     }
 
+    pub fn remove(&self, name: &OsStr) -> io::Result<()> {
+        // Validate the same private regular-file policy before unlinking from
+        // the pinned directory. Never follow symlinks or delete other entries.
+        match self.regular(name, libc::O_RDONLY) {
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(error),
+        }
+        let name = component(name)?;
+        if unsafe { libc::unlinkat(self.file.as_raw_fd(), name.as_ptr(), 0) } != 0 {
+            let error = io::Error::last_os_error();
+            if error.kind() != io::ErrorKind::NotFound {
+                return Err(error);
+            }
+        }
+        Ok(())
+    }
+
     fn exists(&self, name: &OsStr) -> io::Result<bool> {
         match self.regular(name, libc::O_RDONLY) {
             Ok(_) => Ok(true),
@@ -204,6 +222,36 @@ pub fn exists(path: &Path) -> io::Result<bool> {
         Err(error) => return Err(error),
     };
     directory.exists(name)
+}
+
+/// Moves a private file to another name in the same directory. Renaming keeps
+/// the modification time, which is the date shown for local backups.
+pub fn rotate(source: &Path, destination: &Path) -> io::Result<()> {
+    let (directory, source) = PrivateDir::parent(source, false)?;
+    directory.regular(source, libc::O_RDONLY)?;
+    let target = destination.file_name().ok_or_else(denied)?;
+    let (source, target) = (component(source)?, component(target)?);
+    // SAFETY: live pinned directory descriptor and NUL-terminated single components.
+    let result = unsafe {
+        libc::renameat(
+            directory.file.as_raw_fd(),
+            source.as_ptr(),
+            directory.file.as_raw_fd(),
+            target.as_ptr(),
+        )
+    };
+    if result != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+pub fn modified(path: &Path) -> io::Result<std::time::SystemTime> {
+    let (directory, name) = PrivateDir::parent(path, false)?;
+    directory
+        .regular(name, libc::O_RDONLY)?
+        .metadata()?
+        .modified()
 }
 
 pub fn lock(path: &Path) -> io::Result<File> {
@@ -244,6 +292,30 @@ pub fn create_keyfile(path: &Path, bytes: &[u8]) -> io::Result<SaveOutcome> {
     write_atomic_in(directory, name, bytes, true)
 }
 
+/// Plain-text exports follow the key-file policy: never overwrite, always 0600,
+/// and only in a directory other users cannot write to.
+pub fn create_export(path: &Path, bytes: &[u8]) -> io::Result<SaveOutcome> {
+    create_keyfile(path, bytes)
+}
+
+/// Reads a file produced by another application, so its permissions are not
+/// ours to enforce. Links and special files are still refused.
+pub fn read_import(path: &Path, limit: u64) -> io::Result<Vec<u8>> {
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)?;
+    if !file.metadata()?.is_file() {
+        return Err(denied());
+    }
+    let mut bytes = Vec::new();
+    file.take(limit + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > limit {
+        return Err(io::Error::other("file troppo grande"));
+    }
+    Ok(bytes)
+}
+
 pub fn read_keyfile(path: &Path, bytes: &mut [u8]) -> io::Result<()> {
     let directory = PrivateDir::open_external(path.parent().ok_or_else(denied)?)?;
     let mut file = directory.regular(path.file_name().ok_or_else(denied)?, libc::O_RDONLY)?;
@@ -261,6 +333,32 @@ pub fn read_keyfile(path: &Path, bytes: &mut [u8]) -> io::Result<()> {
         ));
     }
     Ok(())
+}
+
+// Unlike link and unlink, RENAME_NOREPLACE cannot leave a file with two names
+// after a crash, and it also works on filesystems without hard links.
+fn install_new(directory: &File, temporary: &CStr, destination: &CStr) -> libc::c_int {
+    let fd = directory.as_raw_fd();
+    // SAFETY: live directory descriptor and NUL-terminated single components.
+    unsafe {
+        let renamed = libc::renameat2(
+            fd,
+            temporary.as_ptr(),
+            fd,
+            destination.as_ptr(),
+            libc::RENAME_NOREPLACE,
+        );
+        if renamed == 0 {
+            return 0;
+        }
+        match io::Error::last_os_error().raw_os_error() {
+            // Some network and FUSE filesystems do not implement the flag.
+            Some(libc::EINVAL | libc::ENOSYS) => {
+                libc::linkat(fd, temporary.as_ptr(), fd, destination.as_ptr(), 0)
+            }
+            _ => -1,
+        }
+    }
 }
 
 fn write_atomic_in(
@@ -291,15 +389,7 @@ fn write_atomic_in(
     fail_at_in(&directory, destination, FailureStage::BeforeCommit)?;
     let destination_c = component(destination)?;
     let result = if create_new {
-        unsafe {
-            libc::linkat(
-                directory.file.as_raw_fd(),
-                temporary.name.as_ptr(),
-                directory.file.as_raw_fd(),
-                destination_c.as_ptr(),
-                0,
-            )
-        }
+        install_new(&directory.file, &temporary.name, &destination_c)
     } else {
         unsafe {
             libc::renameat(

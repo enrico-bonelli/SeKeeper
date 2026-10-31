@@ -6,6 +6,8 @@ use std::path::{Path, PathBuf};
 pub const MAX_SNAPSHOT_BYTES: u64 = 16 * 1024 * 1024;
 pub const MAX_HISTORY_BYTES: usize = 64 * 1024 * 1024;
 pub const MAX_VERSIONS: usize = 2048;
+pub const RETAINED_VERSIONS: usize = 30;
+pub const MAX_LINEAGE: usize = 65_536;
 
 pub fn valid_id(id: &str) -> bool {
     id.len() == 32
@@ -14,11 +16,12 @@ pub fn valid_id(id: &str) -> bool {
             .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
 }
 
+pub fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
 pub fn fingerprint(bytes: &[u8]) -> String {
-    Sha256::digest(bytes)
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect()
+    hex(&Sha256::digest(bytes))
 }
 
 pub fn directory(vault_path: &Path) -> PathBuf {
@@ -79,4 +82,23 @@ pub fn load(directory: &Path) -> io::Result<Vec<(String, Vec<u8>)>> {
         result.push((id.to_string(), bytes));
     }
     Ok(result)
+}
+
+pub fn prune(directory: &Path, obsolete: &std::collections::BTreeSet<String>) -> io::Result<()> {
+    let directory = match storage::PrivateDir::open(directory, false) {
+        Ok(directory) => directory,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    let mut removed = false;
+    for name in directory.entries()? {
+        if let Some(id) = name.to_str().and_then(|name| name.strip_suffix(".sek"))
+            && valid_id(id)
+            && obsolete.contains(id)
+        {
+            directory.remove(&name)?;
+            removed = true;
+        }
+    }
+    if removed { directory.sync() } else { Ok(()) }
 }

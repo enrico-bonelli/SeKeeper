@@ -2,6 +2,7 @@ use std::{env, path::PathBuf, process::Command};
 
 fn main() {
     println!("cargo:rerun-if-changed=data/sekeeper.gresource.xml");
+    println!("cargo:rerun-if-changed=data/style.css");
     println!(
         "cargo:rerun-if-changed=data/icons/hicolor/scalable/apps/io.github.sekeeper.Sekeeper.svg"
     );

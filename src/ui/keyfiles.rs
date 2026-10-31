@@ -1,15 +1,27 @@
 use super::*;
 use crate::keyfile::KeyFile;
+use crate::preferences::Preferences;
 use gtk4::{FileChooserAction, FileChooserDialog};
 use std::io;
+use std::path::Path;
 
 #[derive(Default)]
 pub struct State {
     path: RefCell<Option<PathBuf>>,
     labels: RefCell<Vec<glib::WeakRef<Label>>>,
+    remember: Cell<bool>,
+    saved: Cell<bool>,
 }
 
 impl State {
+    pub fn restore(&self, vault: &Path) {
+        if let Some(path) = Preferences::load(vault).keyfile {
+            *self.path.borrow_mut() = Some(path);
+            self.remember.set(true);
+            self.saved.set(true);
+        }
+    }
+
     pub fn load(&self) -> io::Result<KeyFile> {
         let path = self.path.borrow();
         let path = path
@@ -48,6 +60,25 @@ impl State {
     }
 }
 
+/// Called after a successful unlock, so a mistyped choice is never stored.
+pub fn remember(state: &SharedState) {
+    let keyfile = &state.keyfile;
+    let wanted = keyfile.remember.get();
+    if !wanted && !keyfile.saved.get() {
+        return;
+    }
+    let preferences = Preferences {
+        keyfile: keyfile.path.borrow().clone().filter(|_| wanted),
+    };
+    match preferences.save(&state.vault_path) {
+        Ok(_) => keyfile.saved.set(wanted),
+        Err(error) => toast(
+            state,
+            &format!("Impossibile ricordare il percorso del file chiave: {error}"),
+        ),
+    }
+}
+
 pub fn controls(state: &SharedState, parent: &impl IsA<gtk4::Window>, creating: bool) -> Box {
     let content = Box::new(Orientation::Vertical, 6);
     let buttons = Box::new(Orientation::Horizontal, 8);
@@ -57,6 +88,7 @@ pub fn controls(state: &SharedState, parent: &impl IsA<gtk4::Window>, creating: 
     let name = Label::new(None);
     name.set_ellipsize(gtk4::pango::EllipsizeMode::Middle);
     name.set_max_width_chars(42);
+    name.set_halign(Align::Start);
     name.add_css_class("dim-label");
     state.keyfile.update_label(&name);
     {
@@ -65,6 +97,18 @@ pub fn controls(state: &SharedState, parent: &impl IsA<gtk4::Window>, creating: 
         labels.push(name.downgrade());
     }
     content.append(&name);
+    let remember = gtk4::CheckButton::with_label("Ricorda il percorso su questo PC");
+    remember.set_tooltip_text(Some(
+        "Salva solo la posizione del file, mai il suo contenuto",
+    ));
+    remember.set_active(state.keyfile.remember.get());
+    remember.connect_toggled(clone!(
+        #[weak]
+        state,
+        move |check| state.keyfile.remember.set(check.is_active())
+    ));
+    content.append(&remember);
+    content.set_margin_top(12);
     let parent = parent.as_ref();
     select.connect_clicked(clone!(
         #[weak]
@@ -144,8 +188,24 @@ fn choose(state: &SharedState, parent: &gtk4::Window, generate: bool) {
                     }
                 }
             }
-            chooser.destroy();
+            dismiss(chooser);
         }
     ));
     chooser.present();
+}
+
+/// GTK crashes if a chooser is destroyed while its folder is still loading: the
+/// pending callback reaches a freed model. It is hidden now and freed later.
+pub fn dismiss(chooser: &FileChooserDialog) {
+    chooser.set_visible(false);
+    chooser.set_destroy_with_parent(false);
+    chooser.set_transient_for(None::<&gtk4::Window>);
+    glib::timeout_add_seconds_local_once(
+        10,
+        clone!(
+            #[strong]
+            chooser,
+            move || chooser.destroy()
+        ),
+    );
 }

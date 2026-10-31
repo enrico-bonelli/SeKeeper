@@ -118,3 +118,53 @@ fn private_regular_files_enforce_limits_and_never_replace_on_create() {
         1
     );
 }
+
+#[test]
+fn pruning_uses_the_pinned_directory_and_refuses_links_and_other_files() {
+    let root = TestDirectory::new();
+    let obsolete = "a".repeat(32);
+    let retained = "b".repeat(32);
+    let directory = root.0.join("history");
+    saved(
+        write_atomic(
+            &directory.join(format!("{obsolete}.sek")),
+            b"obsolete",
+            true,
+        )
+        .unwrap(),
+    );
+    saved(
+        write_atomic(
+            &directory.join(format!("{retained}.sek")),
+            b"retained",
+            true,
+        )
+        .unwrap(),
+    );
+    saved(write_atomic(&directory.join("unrelated"), b"keep", true).unwrap());
+    let ids = [obsolete.clone()].into_iter().collect();
+    crate::history::prune(&directory, &ids).unwrap();
+    assert!(!directory.join(format!("{obsolete}.sek")).exists());
+    assert!(directory.join(format!("{retained}.sek")).exists());
+    assert!(directory.join("unrelated").exists());
+    let external = root.0.join("external");
+    saved(write_atomic(&external, b"external", true).unwrap());
+    symlink(&external, directory.join(format!("{obsolete}.sek"))).unwrap();
+    assert!(crate::history::prune(&directory, &ids).is_err());
+    assert_eq!(fs::read(&external).unwrap(), b"external");
+    let pinned = PrivateDir::open(&directory, false).unwrap();
+    let moved = root.0.join("moved");
+    fs::rename(&directory, &moved).unwrap();
+    let other = TestDirectory::new();
+    saved(write_atomic(&other.0.join(format!("{retained}.sek")), b"external", true).unwrap());
+    symlink(&other.0, &directory).unwrap();
+    pinned
+        .remove(OsStr::new(&format!("{retained}.sek")))
+        .unwrap();
+    pinned.sync().unwrap();
+    assert!(!moved.join(format!("{retained}.sek")).exists());
+    assert_eq!(
+        fs::read(other.0.join(format!("{retained}.sek"))).unwrap(),
+        b"external"
+    );
+}

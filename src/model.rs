@@ -31,7 +31,16 @@ pub fn matching_credentials<'a>(credentials: &'a [Credential], query: &str) -> V
     let query = query.trim().to_lowercase();
     credentials
         .iter()
-        .filter(|credential| credential.description.to_lowercase().contains(&query))
+        .filter(|credential| {
+            // Secrets stay out of the search: password and notes are never matched.
+            [
+                &credential.description,
+                &credential.username,
+                &credential.address,
+            ]
+            .iter()
+            .any(|field| field.to_lowercase().contains(&query))
+        })
         .collect()
 }
 
@@ -40,6 +49,15 @@ pub struct VaultData {
     pub credentials: Vec<Credential>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub revision: Option<Revision>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lineage: Vec<RevisionLink>,
+}
+
+// Authenticated ancestry only: no credentials or previous vault contents.
+#[derive(Clone, PartialEq, Eq, Deserialize, Serialize, Zeroize, ZeroizeOnDrop)]
+pub struct RevisionLink {
+    pub id: String,
+    pub parents: Vec<String>,
 }
 
 #[derive(Clone, Deserialize, Serialize, Zeroize, ZeroizeOnDrop)]

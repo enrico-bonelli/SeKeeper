@@ -8,6 +8,20 @@ fn config() -> Config {
     }
 }
 
+/// A parallel test forking at the wrong moment briefly inherits the descriptor
+/// that wrote the fake script, and executing it then fails with ETXTBSY.
+fn retry_while_script_is_busy<T>(mut request: impl FnMut() -> Result<T>) -> Result<T> {
+    for _ in 0..100 {
+        match request() {
+            Err(CloudError::Message(message)) if message.starts_with("curl non disponibile") => {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            result => return result,
+        }
+    }
+    request()
+}
+
 #[test]
 fn config_rejects_endpoint_and_path_injection() {
     let good = config();
@@ -172,14 +186,15 @@ fn curl_receives_secrets_only_on_stdin_and_uploads_are_conditional() {
         },
         deadline: Instant::now() + Duration::from_secs(10),
     };
-    let (status, bytes) = client
-        .request_with(
+    let (status, bytes) = retry_while_script_is_busy(|| {
+        client.request_with(
             &program,
             "sekeeper/test.sek",
             "",
             Some(b"encrypted test body"),
         )
-        .unwrap();
+    })
+    .unwrap();
     assert_eq!(status, 200);
     assert_eq!(bytes, b"response");
     assert_eq!(std::fs::read(uploaded).unwrap(), b"encrypted test body");
@@ -197,6 +212,58 @@ fn curl_receives_secrets_only_on_stdin_and_uploads_are_conditional() {
     ] {
         assert!(!args.contains(secret));
         assert!(stdin.contains(secret));
+    }
+}
+
+#[test]
+fn deletion_is_signed_bodyless_scoped_to_a_valid_snapshot_and_keeps_secrets_off_argv() {
+    use std::os::unix::fs::PermissionsExt;
+    let directory = TestDirectory::new();
+    let program = directory.0.join("fake-curl");
+    let args = directory.0.join("args");
+    let input = directory.0.join("stdin");
+    let script = format!(
+        "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\ncat > '{}'\nprintf '\\n204'\n",
+        args.display(),
+        input.display()
+    );
+    let outcome = storage::write_atomic(&program, script.as_bytes(), true).unwrap();
+    assert!(matches!(outcome, storage::SaveOutcome::Durable));
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let client = S3 {
+        config: config(),
+        credentials: Credentials {
+            access_key: "AKIAEXAMPLEONLY123456".into(),
+            secret_key: "PUBLIC-TEST-SECRET".into(),
+            session_token: "PUBLIC-TEST-TOKEN".into(),
+        },
+        deadline: Instant::now() + Duration::from_secs(10),
+    };
+    let id = "a".repeat(32);
+    let key = client.key(&id).unwrap();
+    let (status, body) = retry_while_script_is_busy(|| {
+        client.request_command(helpers::testing_command(&program), &key, "", None, true)
+    })
+    .unwrap();
+    assert_eq!(status, 204);
+    assert!(body.is_empty());
+    let args = std::fs::read_to_string(args).unwrap();
+    let input = std::fs::read_to_string(input).unwrap();
+    assert!(args.contains("--request\nDELETE\n"));
+    assert!(args.contains(&format!("/v3/versions/{id}.sek")));
+    assert!(args.contains("--aws-sigv4\naws:amz:eu-central-1:s3"));
+    assert!(!args.contains("--upload-file"));
+    assert!(!args.contains("If-None-Match"));
+    for value in [
+        "AKIAEXAMPLEONLY123456",
+        "PUBLIC-TEST-SECRET",
+        "PUBLIC-TEST-TOKEN",
+    ] {
+        assert!(!args.contains(value));
+        assert!(input.contains(value));
+    }
+    for invalid in ["../outside", "", "a/b", "x"] {
+        assert!(client.key(invalid).is_err());
     }
 }
 

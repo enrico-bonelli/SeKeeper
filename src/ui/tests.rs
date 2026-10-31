@@ -26,6 +26,22 @@ fn auth_button(state: &SharedState, label: &str) -> Button {
         .unwrap()
 }
 
+/// Unlocking and restoring run on a worker: let the main loop deliver the result.
+fn wait_until(condition: impl Fn() -> bool) {
+    let context = glib::MainContext::default();
+    let deadline = Instant::now() + std::time::Duration::from_secs(60);
+    while !condition() {
+        assert!(Instant::now() < deadline, "operazione non completata");
+        context.iteration(false);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
+fn unlock(state: &SharedState, label: &str) {
+    auth_button(state, label).emit_clicked();
+    wait_until(|| !state.unlocking.get());
+}
+
 #[test]
 #[ignore = "richiede un display GTK; eseguire con xvfb-run -a cargo test ui::tests -- --ignored"]
 fn unlock_existing_vault_idle_lock_editor_cleanup_and_backup_restore() {
@@ -73,7 +89,10 @@ fn unlock_existing_vault_idle_lock_editor_cleanup_and_backup_restore() {
     assert_eq!(passwords(state.auth.upcast_ref()).len(), 1);
     passwords(state.auth.upcast_ref())[0].set_text("public fixture master password");
     auth_button(&state, "Sblocca").emit_clicked();
-    assert!(state.vault.borrow().is_some());
+    // The window keeps running during the KDF, with the form disabled.
+    assert!(state.unlocking.get() && !state.auth.is_sensitive());
+    wait_until(|| !state.unlocking.get());
+    assert!(state.vault.borrow().is_some() && state.auth.is_sensitive());
     assert_eq!(state.stack.visible_child_name().as_deref(), Some("vault"));
     for description in ["Posta lavoro", "Banca Èlite"] {
         let mut entry = Credential::default();
@@ -102,6 +121,46 @@ fn unlock_existing_vault_idle_lock_editor_cleanup_and_backup_restore() {
     assert!(credential.created_at.is_some());
     assert!(credential.updated_at.is_some());
     let id = credential.id.clone();
+
+    // The details pane shows the selection, keeping the password out of labels.
+    let details = &state.details;
+    assert_eq!(
+        details.root.visible_child_name().as_deref(),
+        Some("credential")
+    );
+    let label = widgets(details.root.upcast_ref())
+        .into_iter()
+        .filter_map(|widget| widget.downcast::<Label>().ok())
+        .find(|label| label.has_css_class("field-secret"))
+        .unwrap();
+    assert!(!label.text().contains("public-test-secret"));
+    let toggle = widgets(details.root.upcast_ref())
+        .into_iter()
+        .find_map(|widget| widget.downcast::<gtk4::ToggleButton>().ok())
+        .unwrap();
+    toggle.set_active(true);
+    assert_eq!(label.text().as_str(), "public-test-secret");
+    toggle.set_active(false);
+    assert!(!label.text().contains("public-test-secret"));
+
+    // Copies stay in the clipboard only until the timeout or the next lock.
+    clipboard::copy(&state, "public-test-secret", "Password");
+    let system = WidgetExt::display(&state.window).clipboard();
+    assert!(system.is_local());
+    assert!(state.toast.reveals_child());
+    assert!(
+        system
+            .formats()
+            .contain_mime_type("x-kde-passwordManagerHint")
+    );
+    assert!(
+        system
+            .formats()
+            .contain_mime_type("text/plain;charset=utf-8")
+    );
+    clipboard::clear(&state);
+    assert!(system.formats().mime_types().is_empty());
+
     show_editor(&state, Some(credential));
     let editor = state
         .dialogs
@@ -132,6 +191,8 @@ fn unlock_existing_vault_idle_lock_editor_cleanup_and_backup_restore() {
     let editor = state.dialogs.borrow().last().unwrap().upgrade().unwrap();
     let secret = passwords(editor.upcast_ref())[0].clone();
     assert_eq!(secret.text().as_str(), "public-test-secret");
+    clipboard::copy(&state, "public-test-secret", "Password");
+    let system = WidgetExt::display(&state.window).clipboard();
     state.idle.borrow_mut().touch(Instant::now() - IDLE_TIMEOUT);
     check_idle(&state);
     assert!(state.vault.borrow().is_none());
@@ -140,9 +201,14 @@ fn unlock_existing_vault_idle_lock_editor_cleanup_and_backup_restore() {
     assert!(state.credentials.row_at_index(0).is_none());
     assert!(state.credential_ids.borrow().is_empty());
     assert!(state.search.text().is_empty());
+    assert!(system.formats().mime_types().is_empty());
+    assert_eq!(
+        state.details.root.visible_child_name().as_deref(),
+        Some("empty")
+    );
 
     passwords(state.auth.upcast_ref())[0].set_text("public fixture master password");
-    auth_button(&state, "Sblocca").emit_clicked();
+    unlock(&state, "Sblocca");
     state.search.set_text("banca");
     state.search.emit_by_name::<()>("search-changed", &[]);
     state
@@ -222,6 +288,7 @@ fn unlock_existing_vault_idle_lock_editor_cleanup_and_backup_restore() {
         .downcast::<Dialog>()
         .unwrap();
     restore.response(ResponseType::Accept);
+    wait_until(|| state.vault.borrow().is_some());
     assert_eq!(
         state
             .vault
@@ -276,7 +343,7 @@ fn unlock_existing_vault_idle_lock_editor_cleanup_and_backup_restore() {
         SaveOutcome::Durable
     ));
     state.keyfile.select(new_key.clone());
-    auth_button(&state, "Crea vault").emit_clicked();
+    unlock(&state, "Crea vault");
     assert!(state.vault.borrow().is_some());
     std::fs::rename(&new_key, directory.join("disconnected.key")).unwrap();
     show_editor(&state, None);
@@ -295,7 +362,13 @@ fn unlock_existing_vault_idle_lock_editor_cleanup_and_backup_restore() {
         .collect();
     entries[0].set_text("Test senza supporto collegato");
     entries[1].set_text("demo");
-    passwords(editor.upcast_ref())[0].set_text("public test secret");
+    let generate = widgets(editor.upcast_ref())
+        .into_iter()
+        .filter_map(|widget| widget.downcast::<Button>().ok())
+        .find(|button| button.label().as_deref() == Some("Genera"))
+        .unwrap();
+    generate.emit_clicked();
+    assert_eq!(passwords(editor.upcast_ref())[0].text().len(), 20);
     editor.response(ResponseType::Accept);
     assert_eq!(
         state
@@ -313,7 +386,17 @@ fn unlock_existing_vault_idle_lock_editor_cleanup_and_backup_restore() {
     auth_button(&state, "Sblocca").emit_clicked();
     assert!(state.vault.borrow().is_none());
     state.keyfile.select(directory.join("disconnected.key"));
-    auth_button(&state, "Sblocca").emit_clicked();
+    // Only the location is remembered, and only after a successful unlock.
+    let remember = widgets(state.auth.upcast_ref())
+        .into_iter()
+        .find_map(|widget| widget.downcast::<gtk4::CheckButton>().ok())
+        .unwrap();
+    remember.set_active(true);
+    unlock(&state, "Sblocca");
+    assert_eq!(
+        crate::preferences::Preferences::load(&new_path).keyfile,
+        Some(directory.join("disconnected.key"))
+    );
     assert_eq!(
         state
             .vault
@@ -325,6 +408,13 @@ fn unlock_existing_vault_idle_lock_editor_cleanup_and_backup_restore() {
             .len(),
         1
     );
+    state.window.close();
+
+    // A later start already knows where the key file is.
+    let state = build_with_path(&application, Ok(new_path.clone())).unwrap();
+    passwords(state.auth.upcast_ref())[0].set_text("public fixture master password");
+    unlock(&state, "Sblocca");
+    assert!(state.vault.borrow().is_some());
     state.window.close();
     std::fs::remove_dir_all(directory).unwrap();
 }

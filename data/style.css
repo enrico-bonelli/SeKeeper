@@ -1,0 +1,133 @@
+/* Colours derive from the active theme, so light and dark desktops both work. */
+
+.auth-page {
+  background-image: radial-gradient(circle at 20% 15%, alpha(#087e85, 0.20), transparent 55%),
+                    radial-gradient(circle at 85% 90%, alpha(#f3b34c, 0.16), transparent 50%);
+}
+
+.auth-card {
+  background-color: @theme_base_color;
+  border-radius: 18px;
+  border: 1px solid alpha(currentColor, 0.10);
+  box-shadow: 0 12px 32px alpha(black, 0.18);
+  padding: 32px 40px;
+}
+
+.auth-title {
+  font-size: 26px;
+  font-weight: 700;
+}
+
+.auth-card button.primary {
+  min-height: 38px;
+  font-weight: 600;
+}
+
+.sidebar {
+  background-color: alpha(currentColor, 0.03);
+  padding: 12px;
+}
+
+.sidebar list {
+  background: none;
+}
+
+.sidebar row {
+  border-radius: 10px;
+  margin: 1px 0;
+  padding: 7px 8px;
+}
+
+.row-title {
+  font-weight: 600;
+}
+
+.row-subtitle {
+  font-size: 0.86em;
+  opacity: 0.65;
+}
+
+.avatar {
+  min-width: 38px;
+  min-height: 38px;
+  border-radius: 12px;
+  color: white;
+  font-weight: 700;
+}
+
+.avatar-large {
+  min-width: 60px;
+  min-height: 60px;
+  border-radius: 18px;
+  font-size: 24px;
+}
+
+.avatar-0 { background-color: #087e85; }
+.avatar-1 { background-color: #3f6fb5; }
+.avatar-2 { background-color: #7a57b8; }
+.avatar-3 { background-color: #b5526f; }
+.avatar-4 { background-color: #b9742a; }
+.avatar-5 { background-color: #4f8a4a; }
+
+.details {
+  padding: 26px 30px;
+}
+
+.details-title {
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.field-card {
+  background-color: @theme_base_color;
+  border-radius: 14px;
+  border: 1px solid alpha(currentColor, 0.10);
+}
+
+.field-row {
+  padding: 10px 12px 10px 16px;
+  border-bottom: 1px solid alpha(currentColor, 0.07);
+}
+
+.field-row:last-child {
+  border-bottom: none;
+}
+
+.field-label {
+  font-size: 0.82em;
+  font-weight: 600;
+  opacity: 0.62;
+}
+
+.field-value {
+  font-size: 1.04em;
+}
+
+.field-secret {
+  font-family: monospace;
+}
+
+.notes {
+  padding: 12px 16px;
+}
+
+.placeholder-title {
+  font-size: 18px;
+  font-weight: 600;
+  opacity: 0.75;
+}
+
+.status-bar {
+  border-top: 1px solid alpha(currentColor, 0.10);
+  padding: 5px 14px;
+  font-size: 0.88em;
+}
+
+.toast {
+  background-color: alpha(#17242c, 0.94);
+  color: white;
+  border-radius: 12px;
+  padding: 9px 16px;
+  margin-bottom: 40px;
+  box-shadow: 0 6px 18px alpha(black, 0.30);
+}

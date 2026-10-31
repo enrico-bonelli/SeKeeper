@@ -6,10 +6,10 @@ use crate::{
 };
 use std::path::PathBuf;
 
-const PASSWORD: &str = "laguna cedro nuvola marmo sentiero";
-struct Workdir(PathBuf);
+pub(super) const PASSWORD: &str = "laguna cedro nuvola marmo sentiero";
+pub(super) struct Workdir(pub(super) PathBuf);
 impl Workdir {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         let path = std::env::temp_dir().join(format!(
             "sekeeper-sync-test-{:032x}",
             rand::random::<u128>()
@@ -17,7 +17,7 @@ impl Workdir {
         std::fs::create_dir(&path).unwrap();
         Self(path)
     }
-    fn vault(&self, name: &str) -> PathBuf {
+    pub(super) fn vault(&self, name: &str) -> PathBuf {
         self.0.join(name).join("vault")
     }
 }
@@ -26,10 +26,10 @@ impl Drop for Workdir {
         let _ = std::fs::remove_dir_all(&self.0);
     }
 }
-fn durable(outcome: SaveOutcome) {
+pub(super) fn durable(outcome: SaveOutcome) {
     assert!(matches!(outcome, SaveOutcome::Durable));
 }
-fn add(vault: &mut Vault, name: &str) {
+pub(super) fn add(vault: &mut Vault, name: &str) {
     durable(
         vault
             .add_credential(Credential {
@@ -45,7 +45,7 @@ fn add(vault: &mut Vault, name: &str) {
             .unwrap(),
     );
 }
-fn seed(work: &Workdir) -> (Vault, Vault) {
+pub(super) fn seed(work: &Workdir) -> (Vault, Vault) {
     let path_a = work.vault("a");
     let path_b = work.vault("b");
     let (mut a, outcome) = Vault::create(&path_a, PASSWORD, &KeyFile::test_key()).unwrap();
@@ -63,10 +63,16 @@ fn seed(work: &Workdir) -> (Vault, Vault) {
     (a, b)
 }
 #[derive(Default)]
-struct MemoryS3 {
-    objects: BTreeMap<String, Vec<u8>>,
+pub(super) struct MemoryS3 {
+    pub(super) objects: BTreeMap<String, Vec<u8>>,
     fail: bool,
     reads: usize,
+    pub(super) fail_put: bool,
+    pub(super) delete_budget: Option<usize>,
+    pub(super) corrupt_get: Option<String>,
+    pub(super) vanish_on_get: Option<String>,
+    pub(super) inject_on_delete: Option<(String, Vec<u8>)>,
+    pub(super) events: Vec<String>,
 }
 impl RemoteStore for MemoryS3 {
     fn list(&mut self) -> Result<Vec<String>> {
@@ -78,13 +84,25 @@ impl RemoteStore for MemoryS3 {
     }
     fn get(&mut self, id: &str) -> Result<Vec<u8>> {
         self.reads += 1;
-        self.objects
+        self.events.push(format!("get:{id}"));
+        if self.vanish_on_get.as_deref() == Some(id) {
+            self.vanish_on_get = None;
+            self.objects.remove(id);
+            return Err(error("removed concurrently"));
+        }
+        let mut bytes = self
+            .objects
             .get(id)
             .cloned()
-            .ok_or_else(|| error("not found"))
+            .ok_or_else(|| error("not found"))?;
+        if self.corrupt_get.as_deref() == Some(id) {
+            bytes.push(0);
+        }
+        Ok(bytes)
     }
     fn put(&mut self, id: &str, bytes: &[u8]) -> Result<()> {
-        if self.fail {
+        self.events.push(format!("put:{id}"));
+        if self.fail || self.fail_put {
             return Err(error("offline"));
         }
         if let Some(existing) = self.objects.get(id)
@@ -95,8 +113,25 @@ impl RemoteStore for MemoryS3 {
         self.objects.insert(id.to_string(), bytes.to_vec());
         Ok(())
     }
+    fn delete(&mut self, id: &str) -> Result<()> {
+        self.events.push(format!("delete:{id}"));
+        if let Some((id, bytes)) = self.inject_on_delete.take() {
+            self.objects.insert(id, bytes);
+        }
+        if self.fail {
+            return Err(error("offline"));
+        }
+        if let Some(remaining) = &mut self.delete_budget {
+            if *remaining == 0 {
+                return Err(error("403 access denied"));
+            }
+            *remaining -= 1;
+        }
+        self.objects.remove(id);
+        Ok(())
+    }
 }
-fn send(vault: &Vault, path: &Path, remote: &mut MemoryS3, cache: &Path) -> Catalog {
+pub(super) fn send(vault: &Vault, path: &Path, remote: &mut MemoryS3, cache: &Path) -> Catalog {
     let downloaded = download(remote, cache).unwrap();
     let catalog = Catalog::build(vault, path, downloaded).unwrap();
     publish(remote, cache, &catalog.copies()).unwrap();

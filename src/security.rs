@@ -1,3 +1,4 @@
+use rand::{Rng, rngs::OsRng};
 use std::io;
 use std::time::{Duration, Instant};
 
@@ -22,6 +23,34 @@ pub fn protect_process() -> io::Result<()> {
         libc::umask(0o077);
     }
     Ok(())
+}
+
+const PASSWORD_CLASSES: [&[u8]; 4] = [
+    b"abcdefghijkmnopqrstuvwxyz",
+    b"ABCDEFGHJKLMNPQRSTUVWXYZ",
+    b"23456789",
+    b"!@#$%^&*()-_=+[]{}:,.?",
+];
+
+/// Random password for an account. Look-alike characters are left out so the
+/// result can also be read and typed by hand.
+pub fn generate_password(length: usize) -> zeroize::Zeroizing<String> {
+    assert!(length >= PASSWORD_CLASSES.len());
+    let alphabet: Vec<u8> = PASSWORD_CLASSES.concat();
+    loop {
+        // Redrawing the whole password keeps every accepted result equally likely.
+        let password: zeroize::Zeroizing<String> = zeroize::Zeroizing::new(
+            (0..length)
+                .map(|_| char::from(alphabet[OsRng.gen_range(0..alphabet.len())]))
+                .collect(),
+        );
+        if PASSWORD_CLASSES
+            .iter()
+            .all(|class| password.bytes().any(|byte| class.contains(&byte)))
+        {
+            return password;
+        }
+    }
 }
 
 pub fn validate_new_password(password: &str) -> Result<(), &'static str> {
@@ -130,6 +159,19 @@ mod tests {
             "a long unique password",
         ] {
             assert!(validate_new_password(good).is_ok());
+        }
+    }
+
+    #[test]
+    fn generated_passwords_have_every_class_and_are_not_repeated() {
+        for length in [8, 20, 64] {
+            let first = generate_password(length);
+            assert_eq!(first.len(), length);
+            for class in PASSWORD_CLASSES {
+                assert!(first.bytes().any(|byte| class.contains(&byte)));
+            }
+            assert!(!first.contains(['I', 'l', '1', 'O', '0']));
+            assert_ne!(*first, *generate_password(length));
         }
     }
 

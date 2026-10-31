@@ -400,22 +400,75 @@ fn competing_writer_is_rejected_without_modifying_the_file() {
 }
 
 #[test]
-fn backup_rotation_retains_three_previous_valid_snapshots() {
+fn backup_rotation_retains_previous_valid_snapshots_and_their_dates() {
     let test = TestVault::new();
     let mut vault = test.create();
-    for name in ["uno", "due", "tre", "quattro"] {
-        durable(vault.add_credential(credential(name)).unwrap());
+    let oldest = BACKUP_COUNT + 2;
+    for index in 0..oldest {
+        durable(
+            vault
+                .add_credential(credential(&index.to_string()))
+                .unwrap(),
+        );
     }
-    assert_eq!(Vault::available_backups(&test.0), vec![1, 2, 3]);
-    for slot in 1..=3 {
+    let slots: Vec<usize> = (1..=BACKUP_COUNT).collect();
+    assert_eq!(Vault::available_backups(&test.0), slots);
+    for slot in slots {
         let backup = Vault::open(
             &Vault::backup_path(&test.0, slot),
             PASSWORD,
             &KeyFile::test_key(),
         )
         .unwrap();
-        assert_eq!(backup.data.credentials.len(), 4 - slot);
+        assert_eq!(backup.data.credentials.len(), oldest - slot);
     }
+    let date = |slot| Vault::backup_modified(&test.0, slot).unwrap();
+    assert!(date(1) >= date(BACKUP_COUNT));
+    let earlier = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000);
+    fs::File::open(Vault::backup_path(&test.0, 1))
+        .unwrap()
+        .set_modified(earlier)
+        .unwrap();
+    durable(vault.add_credential(credential("rotazione")).unwrap());
+    assert_eq!(date(2), 1_000_000);
+    assert_eq!(Vault::backup_modified(&test.0, 99), None);
+}
+
+#[test]
+fn import_adds_entries_in_one_save_keeps_dates_and_skips_duplicates() {
+    let test = TestVault::new();
+    let mut vault = test.create();
+    durable(vault.add_credential(credential("esistente")).unwrap());
+    let backups = Vault::available_backups(&test.0).len();
+    let mut dated = credential("con data");
+    dated.created_at = Some(1_700_000_000);
+    dated.updated_at = Some(1_700_000_100);
+    let report = vault
+        .import_credentials(vec![credential("esistente"), dated, credential("nuova")])
+        .unwrap();
+    durable(report.outcome);
+    assert_eq!((report.added, report.skipped), (2, 1));
+    assert_eq!(Vault::available_backups(&test.0).len(), backups + 1);
+    let stored = test.open();
+    assert_eq!(stored.data.credentials.len(), 3);
+    assert_eq!(stored.data.credentials[1].created_at, Some(1_700_000_000));
+    assert_eq!(stored.data.credentials[1].updated_at, Some(1_700_000_100));
+    assert!(stored.data.credentials[2].created_at.is_some());
+    assert!(!stored.data.credentials[1].id.is_empty());
+
+    let before = vault.encrypted().to_vec();
+    let report = vault.import_credentials(vec![credential("nuova")]).unwrap();
+    durable(report.outcome);
+    assert_eq!((report.added, report.skipped), (0, 1));
+    assert_eq!(before, vault.encrypted());
+
+    inject_failure(&test.0, FailureStage::BeforeCommit);
+    assert!(
+        vault
+            .import_credentials(vec![credential("fallita")])
+            .is_err()
+    );
+    assert_eq!(vault.data.credentials.len(), 3);
 }
 
 #[test]

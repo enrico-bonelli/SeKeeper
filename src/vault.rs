@@ -1,6 +1,6 @@
 use crate::history;
 use crate::keyfile::KeyFile;
-use crate::model::{Revision, VaultData};
+use crate::model::{Revision, RevisionLink, VaultData};
 use crate::security::validate_new_password;
 use crate::storage::{self, SaveOutcome};
 use aes_gcm::aead::{Aead, KeyInit, OsRng, Payload};
@@ -20,7 +20,7 @@ const SALT_START: usize = 24;
 const NONCE_START: usize = SALT_START + SALT_LEN;
 const HEADER_LEN: usize = NONCE_START + NONCE_LEN;
 const TAG_LEN: usize = 16;
-pub const BACKUP_COUNT: usize = 3;
+pub const BACKUP_COUNT: usize = 10;
 const MEMORY_KIB: u32 = 256 * 1024;
 const ITERATIONS: u32 = 3;
 const PARALLELISM: u32 = 4;
@@ -79,7 +79,16 @@ pub struct Vault {
     salt: [u8; SALT_LEN],
     previous_ciphertext: Option<Vec<u8>>,
     device: String,
+    // Set once this session uses S3. Without it nothing needs the complete
+    // copies in the history directory: lineage alone preserves the ancestry.
+    sync_active: bool,
     pub data: VaultData,
+}
+
+pub struct ImportReport {
+    pub added: usize,
+    pub skipped: usize,
+    pub outcome: SaveOutcome,
 }
 
 impl Vault {
@@ -106,6 +115,7 @@ impl Vault {
             salt,
             previous_ciphertext: None,
             device: "Questo PC".into(),
+            sync_active: false,
             data: VaultData::default(),
         };
         let outcome = vault.save_locked()?;
@@ -139,6 +149,7 @@ impl Vault {
             salt,
             previous_ciphertext: None,
             device: "Questo PC".into(),
+            sync_active: false,
             data: VaultData::default(),
         };
         vault.data = vault.decode(&encrypted)?;
@@ -215,8 +226,50 @@ impl Vault {
         }
     }
 
+    /// Adds all entries in one save, skipping those already in the vault.
+    pub fn import_credentials(
+        &mut self,
+        incoming: Vec<crate::model::Credential>,
+    ) -> Result<ImportReport, VaultError> {
+        let existing = self.data.credentials.len();
+        let total = incoming.len();
+        let now = timestamp();
+        for mut credential in incoming {
+            let known = self
+                .data
+                .credentials
+                .iter()
+                .any(|item| item.same_content(&credential));
+            if known {
+                continue;
+            }
+            credential.id = new_id();
+            credential.created_at = credential.created_at.or(Some(now));
+            credential.updated_at = credential.updated_at.or(Some(now));
+            self.data.credentials.push(credential);
+        }
+        let added = self.data.credentials.len() - existing;
+        let outcome = if added == 0 {
+            SaveOutcome::Durable
+        } else {
+            match self.save() {
+                Ok(outcome) => outcome,
+                Err(error) => {
+                    self.data.credentials.truncate(existing);
+                    return Err(error);
+                }
+            }
+        };
+        Ok(ImportReport {
+            added,
+            skipped: total - added,
+            outcome,
+        })
+    }
+
     fn save(&mut self) -> Result<SaveOutcome, VaultError> {
         let previous_revision = self.data.revision.clone();
+        let previous_lineage = self.data.lineage.clone();
         self.advance_revision(None);
         let result = (|| {
             let _lock = storage::lock(&self.path)?;
@@ -224,6 +277,7 @@ impl Vault {
         })();
         if result.is_err() {
             self.data.revision = previous_revision;
+            self.data.lineage = previous_lineage;
         }
         result
     }
@@ -234,6 +288,9 @@ impl Vault {
     }
 
     fn encode(&self) -> Result<Vec<u8>, VaultError> {
+        if self.data.lineage.len() > history::MAX_LINEAGE {
+            return Err(VaultError::InvalidData);
+        }
         let cipher =
             Aes256Gcm::new_from_slice(self.key.as_slice()).map_err(|_| VaultError::Encryption)?;
         let nonce = random_bytes::<NONCE_LEN>();
@@ -288,6 +345,25 @@ impl Vault {
         {
             return Err(VaultError::InvalidData);
         }
+        let mut seen = std::collections::BTreeSet::new();
+        if data.lineage.len() > history::MAX_LINEAGE
+            || data.revision.is_none() && !data.lineage.is_empty()
+            || data.lineage.iter().any(|link| {
+                !history::valid_id(&link.id)
+                    || !seen.insert(&link.id)
+                    || data
+                        .revision
+                        .as_ref()
+                        .is_some_and(|revision| revision.id == link.id)
+                    || link.parents.len() > 128
+                    || link
+                        .parents
+                        .iter()
+                        .any(|id| !history::valid_id(id) || id == &link.id)
+            })
+        {
+            return Err(VaultError::InvalidData);
+        }
         Ok(data)
     }
 
@@ -314,7 +390,8 @@ impl Vault {
     }
 
     fn remember(&self, outcome: SaveOutcome) -> SaveOutcome {
-        if let Some(revision) = &self.data.revision
+        if self.sync_active
+            && let Some(revision) = &self.data.revision
             && let Err(error) = history::remember(
                 &history::directory(&self.path),
                 &revision.id,
@@ -328,19 +405,20 @@ impl Vault {
     }
 
     fn vault_id(&self) -> String {
-        self.salt.iter().map(|b| format!("{b:02x}")).collect()
+        history::hex(&self.salt)
     }
 
     fn advance_revision(&mut self, parents: Option<Vec<String>>) {
         if let Some(previous) = &self.data.revision {
+            self.data.lineage.push(RevisionLink {
+                id: previous.id.clone(),
+                parents: previous.parents.clone(),
+            });
             self.data.revision = Some(Revision {
                 vault_id: previous.vault_id.clone(),
                 id: new_id(),
                 parents: parents.unwrap_or_else(|| vec![previous.id.clone()]),
-                created_at: std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs(),
+                created_at: timestamp(),
                 device: self.device.clone(),
             });
         }
@@ -352,6 +430,7 @@ impl Vault {
 
     pub fn enable_sync(&mut self, device: &str) -> Result<SaveOutcome, VaultError> {
         self.device = device.chars().take(64).collect();
+        self.sync_active = true;
         if self.data.revision.is_some() {
             return Ok(self.remember(SaveOutcome::Durable));
         }
@@ -359,10 +438,7 @@ impl Vault {
             vault_id: self.vault_id(),
             id: new_id(),
             parents: Vec::new(),
-            created_at: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs(),
+            created_at: timestamp(),
             device: self.device.clone(),
         });
         let result = (|| {
@@ -375,11 +451,46 @@ impl Vault {
         result
     }
 
-    pub fn read_revision(&self, bytes: &[u8]) -> Result<Revision, VaultError> {
-        self.decode(bytes)?
-            .revision
-            .clone()
-            .ok_or(VaultError::InvalidData)
+    /// Decrypts another copy of this vault for comparison, without installing it.
+    pub fn read_credentials(
+        &self,
+        bytes: &[u8],
+    ) -> Result<Vec<crate::model::Credential>, VaultError> {
+        Ok(std::mem::take(&mut self.decode(bytes)?.credentials))
+    }
+
+    pub fn read_sync_metadata(
+        &self,
+        bytes: &[u8],
+    ) -> Result<(Revision, Vec<RevisionLink>), VaultError> {
+        let mut data = self.decode(bytes)?;
+        let revision = data.revision.take().ok_or(VaultError::InvalidData)?;
+        Ok((revision, std::mem::take(&mut data.lineage)))
+    }
+
+    // Upgrade existing v3 histories in place before the first deletion. Future
+    // saves inherit this metadata and append their immediate predecessor.
+    pub fn record_lineage(
+        &mut self,
+        mut links: Vec<RevisionLink>,
+    ) -> Result<SaveOutcome, VaultError> {
+        let current = self.data.revision.as_ref().ok_or(VaultError::InvalidData)?;
+        links.retain(|link| link.id != current.id);
+        links.sort_by(|a, b| a.id.cmp(&b.id));
+        let mut previous = self.data.lineage.clone();
+        previous.sort_by(|a, b| a.id.cmp(&b.id));
+        if previous == links {
+            return Ok(SaveOutcome::Durable);
+        }
+        if links.len() >= history::MAX_LINEAGE {
+            return Err(VaultError::InvalidData);
+        }
+        let previous = std::mem::replace(&mut self.data.lineage, links);
+        let result = self.save();
+        if result.is_err() {
+            self.data.lineage = previous;
+        }
+        result
     }
 
     pub fn install_remote(&mut self, bytes: Vec<u8>) -> Result<SaveOutcome, VaultError> {
@@ -429,6 +540,7 @@ impl Vault {
             return Err(VaultError::AlreadyExists);
         }
         let outcome = storage::write_atomic(&self.path, self.encrypted(), true)?;
+        self.sync_active = true;
         Ok(self.remember(outcome))
     }
 
@@ -440,11 +552,13 @@ impl Vault {
             return Err(VaultError::InvalidData);
         }
         let previous = self.data.revision.clone();
+        let previous_lineage = self.data.lineage.clone();
         self.advance_revision(Some(parents));
         let encoded = match self.encode() {
             Ok(bytes) => bytes,
             Err(error) => {
                 self.data.revision = previous;
+                self.data.lineage = previous_lineage;
                 return Err(error);
             }
         };
@@ -453,6 +567,7 @@ impl Vault {
         if result.is_err() {
             self.previous_ciphertext = original;
             self.data.revision = previous;
+            self.data.lineage = previous_lineage;
         }
         result
     }
@@ -467,17 +582,21 @@ impl Vault {
             .collect()
     }
 
+    pub fn backup_modified(path: &Path, slot: usize) -> Option<u64> {
+        storage::modified(&Self::backup_path(path, slot))
+            .ok()?
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()
+            .map(|age| age.as_secs())
+    }
+
     fn backup(&self, previous: &[u8]) -> Result<(), VaultError> {
-        // Copy from oldest to newest: a failed rotation leaves the primary file
-        // untouched and never destroys the newest valid backup first.
+        // Rename from oldest to newest: a failed rotation leaves the primary
+        // file untouched, and each copy keeps the date it was really written.
         for slot in (2..=BACKUP_COUNT).rev() {
             let source = Self::backup_path(&self.path, slot - 1);
-            match history::read_snapshot(&source) {
-                Ok(bytes) => require_durable(storage::write_atomic(
-                    &Self::backup_path(&self.path, slot),
-                    &bytes,
-                    false,
-                )?)?,
+            match storage::rotate(&source, &Self::backup_path(&self.path, slot)) {
+                Ok(()) => {}
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {}
                 Err(error) => return Err(error.into()),
             }
@@ -519,7 +638,6 @@ impl Vault {
         let outcome = storage::write_atomic(path, &bytes, false)?;
         vault.path = path.to_path_buf();
         vault.previous_ciphertext = Some(bytes);
-        let outcome = vault.remember(outcome);
         Ok((vault, outcome))
     }
 }
@@ -572,10 +690,7 @@ fn derive_key(
 }
 
 fn new_id() -> String {
-    random_bytes::<16>()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    history::hex(&random_bytes::<16>())
 }
 
 fn timestamp() -> u64 {

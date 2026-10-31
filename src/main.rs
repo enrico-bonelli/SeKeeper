@@ -2,10 +2,12 @@ mod helpers;
 mod history;
 mod keyfile;
 mod model;
+mod preferences;
 mod s3;
 mod security;
 mod storage;
 mod sync;
+mod transfer;
 mod ui;
 mod vault;
 
