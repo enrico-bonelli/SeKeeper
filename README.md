@@ -51,10 +51,30 @@ controllo.
 
 ## Requisiti e avvio
 
+### Disposizione dei sorgenti
+
+Sekeeper è composto da due progetti, che devono stare **nella stessa cartella**:
+
+```text
+src/
+├── sekeeper/        questa applicazione desktop
+└── sekeeper-core/   libreria condivisa con l'app Android
+```
+
+[`sekeeper-core`](../sekeeper-core) contiene il formato del vault (Argon2id,
+AES-256-GCM e file chiave), la ricostruzione della cronologia delle versioni,
+il modello delle credenziali, l'importazione ed esportazione CSV e il QR code per
+il telefono. Non è pubblicata su crates.io: `Cargo.toml` la usa come dipendenza
+locale, con il percorso `../sekeeper-core`, e senza quella cartella la
+compilazione si ferma subito con un errore sul percorso mancante. Usa sempre le
+due copie alla stessa versione, perché formato e cronologia devono coincidere su
+tutti i dispositivi.
+
 ### Installazione su Arch Linux
 
 La ricetta locale si trova in [`packaging/arch/PKGBUILD`](packaging/arch/PKGBUILD).
-Da una copia completa del progetto, anche prima di creare un repository Git:
+Da una copia completa del progetto, con `sekeeper-core` nella cartella accanto
+(vedi [Disposizione dei sorgenti](#disposizione-dei-sorgenti)):
 
 ```sh
 cd packaging/arch
@@ -63,7 +83,9 @@ makepkg -si
 
 Esegui `makepkg` come utente normale. Il comando installa le dipendenze necessarie,
 compila l'applicazione, esegue i test ordinari e propone l'installazione tramite
-pacman. Servono gli strumenti di `base-devel` e una toolchain Rust; `rustup` è
+pacman. La ricetta copia nel pacchetto sorgente sia questo progetto sia
+`../sekeeper-core`, quindi le modifiche a entrambi entrano nel pacchetto. Servono
+gli strumenti di `base-devel` e una toolchain Rust; `rustup` è
 utilizzabile se ha una toolchain predefinita compatibile. Al primo build è
 necessaria la rete per scaricare le dipendenze Cargo.
 
@@ -78,7 +100,7 @@ Per creare soltanto il pacchetto usa `makepkg -s`, senza `-i`. Potrai installare
 il file ottenuto con:
 
 ```sh
-sudo pacman -U ./sekeeper-0.3.0-1-x86_64.pkg.tar.zst
+sudo pacman -U ./sekeeper-0.3.1-1-x86_64.pkg.tar.zst
 ```
 
 Le dipendenze opzionali `curl` e `libsecret`, con un portachiavi Secret Service
@@ -86,10 +108,24 @@ attivo, servono per l'integrazione S3; non sono necessarie per l'uso locale.
 
 ### Compilazione manuale
 
-Per compilare l'applicazione servono **Linux**, **Rust 1.89 o successivo** e le
-librerie di sviluppo **GTK4 4.6 o successive**, con `pkg-config` e
-`glib-compile-resources` per incorporare l'icona. Su Arch quest'ultimo è fornito
-da `glib2`. Per l'uso locale non occorrono servizi cloud.
+Per compilare l'applicazione servono:
+
+- **Linux** e **Rust 1.89 o successivo** (edizione 2024);
+- la libreria [`sekeeper-core`](#disposizione-dei-sorgenti) nella cartella
+  `../sekeeper-core`;
+- le librerie di sviluppo **GTK4 4.6 o successive**, con `pkg-config` e
+  `glib-compile-resources` per incorporare l'icona.
+
+Su Arch Linux bastano:
+
+```sh
+sudo pacman -S --needed base-devel rust gtk4 glib2 pkgconf
+```
+
+Su Debian/Ubuntu i pacchetti corrispondenti sono `build-essential`,
+`libgtk-4-dev` e `pkg-config`, con Rust installato tramite `rustup` se la
+versione della distribuzione è più vecchia della 1.89. Per l'uso locale non
+occorrono servizi cloud.
 
 Per l'opzione AWS S3 servono anche `curl` 7.75 o successivo con supporto AWS
 SigV4 e `secret-tool` (pacchetto `libsecret` su Arch Linux e `libsecret-tools`
@@ -99,12 +135,24 @@ devono appartenere al proprietario dell'albero di sistema, senza link simbolici 
 permessi di scrittura per gruppo/altri. Serve `/proc` montato, come nei normali
 desktop Linux.
 
+Compilazione e avvio, dalla cartella che contiene i due progetti:
+
 ```sh
+ls sekeeper-core/Cargo.toml   # la libreria condivisa deve esserci
+cd sekeeper
 cargo build --locked --release
 ./target/release/sekeeper
 ```
 
-Esegui i comandi dalla cartella del progetto. Dopo aver compilato una nuova
+`--locked` usa esattamente le versioni delle dipendenze registrate in
+`Cargo.lock`, compresa quella di `sekeeper-core`. Al primo build serve la rete per
+scaricare le dipendenze Cargo; i build successivi funzionano anche offline.
+Cargo ricompila da solo `sekeeper-core` quando i suoi sorgenti cambiano: non serve
+compilarla a parte. La build di release attiva LTO, quindi richiede qualche minuto.
+
+Per una versione di sviluppo, più rapida da compilare, usa `cargo run --locked`.
+Anche in sviluppo Argon2id viene compilato ottimizzato, così lo sblocco non
+diventa lento. Dopo aver compilato una nuova
 versione, chiudi l'istanza eventualmente aperta e riavvia l'eseguibile: una seconda
 invocazione può limitarsi a portare in primo piano il processo già in esecuzione.
 
@@ -247,6 +295,24 @@ Il file chiave non viene cifrato da Sekeeper: la cifratura del supporto USB o de
 copia cloud va gestita separatamente. L'applicazione non monta supporti e non
 decifra contenitori USB o file esterni.
 
+### Configurare il telefono
+
+Con il vault sbloccato e il supporto del file chiave collegato, il menu accanto a
+**S3…** contiene **Configura il telefono…**. Sekeeper rilegge e verifica il file
+chiave e lo mostra come QR code per l'app
+[Sekeeper per Android](../sekeeper-android), insieme a bucket, regione e prefisso se
+S3 è configurato. Puoi includere le chiavi AWS di questo PC, lette dal portachiavi,
+oppure indicare chiavi dedicate al telefono, che non vengono salvate. Con le chiavi
+del PC, PC e telefono condividono la stessa identità IAM: revocarla li scollega
+entrambi. Chiavi dedicate al telefono, con i soli permessi `s3:ListBucket` e
+`s3:GetObject` finché l'app è in sola lettura, si revocano da sole se il telefono
+va perso. Le chiavi temporanee con session token non sono trasferibili. La finestra si chiude da sola
+dopo 60 secondi o al blocco del vault.
+
+La password principale non fa mai parte del QR code. Il file chiave e le chiavi AWS
+sì: chi fotografa il codice ottiene tutto tranne la password. Mostralo solo dove nessuno può vedere lo schermo. Linux non
+permette all'applicazione di impedire gli screenshot.
+
 ### Supporti e permessi
 
 Il file deve appartenere all'utente e avere permessi `0600` o più restrittivi;
@@ -326,14 +392,24 @@ JSON di configurazione, nel vault o negli oggetti S3. Se il portachiavi non è
 disponibile, l'app segnala l'errore e non ripiega su file di credenziali in chiaro.
 Quando inserisci nuove credenziali, la voce precedente viene rimossa dal portachiavi
 dopo il salvataggio della nuova configurazione.
-Usa lo stesso bucket e prefisso su tutti i PC, con credenziali dedicate a ciascun
-dispositivo. Non usare credenziali amministrative o dell'account root.
+Usa lo stesso bucket e prefisso su tutti i PC. Credenziali dedicate a ciascun
+dispositivo sono preferibili, perché si revocano una alla volta; il telefono può
+anche ricevere quelle del PC (vedi [Configurare il telefono](#configurare-il-telefono)).
+Non usare credenziali amministrative o dell'account root.
 
 ### Bucket e permessi IAM
 
 Il bucket deve essere privato, con tutte le opzioni Block Public Access attive,
 ACL disabilitate e cifratura SSE-S3. È consigliato abilitare anche S3 Versioning.
 Per iniziare, lascia disattivate le regole di scadenza automatica degli oggetti.
+
+Chi ottiene le chiavi del bucket non può leggere né modificare il vault, ma può
+cancellare le copie. Un PC già sincronizzato e il telefono, che conserva l'ultima
+versione aperta, rifiutano un ritorno silenzioso a una versione più vecchia e lo
+segnalano. Un PC nuovo, in recupero, vede invece solo ciò che il bucket contiene.
+Con S3 Versioning le copie cancellate restano recuperabili come versioni non
+correnti; per una protezione più forte valuta MFA Delete o S3 Object Lock in
+modalità governance sul prefisso del vault.
 
 Questa policy IAM è sufficiente per l'integrazione; sostituisci `NOME_BUCKET`.
 Lo statement `s3:DeleteObject` usa il prefisso di esempio `sekeeper/personale/`:
@@ -476,7 +552,14 @@ usa `If-None-Match: *`: un oggetto esistente non viene sovrascritto, e una rispo
 412 viene verificata scaricando la copia esistente. La pulizia rimuove soltanto
 gli identificativi superati appartenenti alla cronologia autenticata del vault,
 nel suo prefisso configurato. Le cache evitano di scaricare nuovamente lo storico
-già presente sul PC. Ogni fase di trasferimento ha un limite di tempo; un invio
+già presente sul PC. Una copia scaricata entra nella cache solo dopo essere stata
+autenticata con la chiave del vault, e solo se la revisione che contiene coincide
+con il nome dell'oggetto; nel recupero su un PC nuovo, solo dopo la verifica con
+password e file chiave. Una copia manomessa o danneggiata resta quindi in memoria,
+fa fallire la sincronizzazione e viene riscaricata dopo la riparazione del bucket.
+Le cache scritte da versioni precedenti vengono ripulite allo stesso modo al primo
+errore. Le risposte di `curl` vengono lette fino al limite di una copia, anche con
+versioni di `curl` che non lo applicano da sole. Ogni fase di trasferimento ha un limite di tempo; un invio
 interrotto viene ripreso in un tentativo successivo senza duplicare le versioni.
 
 Sono previsti limiti difensivi di 16 MiB per copia, 2048 copie complete e 64 MiB di
@@ -552,8 +635,9 @@ non cifra il file.
 
 Sekeeper mantiene un ambito essenziale:
 
-- È un'applicazione desktop per **Linux**; non include app per telefono,
-  estensioni browser o compilazione automatica dei moduli.
+- È un'applicazione desktop per **Linux**. L'app per telefono
+  [Sekeeper per Android](../sekeeper-android) per ora consulta il vault in sola
+  lettura. Non sono previste estensioni browser né compilazione automatica dei moduli.
 - Non include lo sblocco con codici Authenticator/TOTP. Il secondo fattore del
   vault è il file chiave.
 - Non è previsto il cambio diretto della password principale o del file chiave:
@@ -582,6 +666,17 @@ generati, configurazioni locali, vault e file chiave personali. L'eccezione
 cargo test --locked --all-targets
 cargo clippy --locked --all-targets -- -D warnings
 cargo fmt --all -- --check
+```
+
+Dopo una modifica a `sekeeper-core` esegui anche i suoi test, dalla sua cartella,
+e poi di nuovo quelli di questo progetto. La feature `testing` della libreria
+espone le chiavi di prova pubbliche usate dalle fixture: questo progetto la attiva
+solo tra le dipendenze di sviluppo e non va mai attivata nelle build normali.
+
+```sh
+cd ../sekeeper-core
+cargo test
+cargo clippy --all-targets --all-features -- -D warnings
 ```
 
 Il test grafico richiede un display ed è escluso dai test ordinari. Con Xvfb, oppure

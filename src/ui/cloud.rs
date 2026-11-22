@@ -1,4 +1,5 @@
 use super::*;
+use crate::sync::LocalCatalog;
 use crate::{s3, sync};
 use std::path::Path;
 use std::time::Duration;
@@ -44,6 +45,11 @@ impl State {
             catalog: RefCell::new(None),
         }
     }
+    /// The active S3 destination, if any, for the phone setup.
+    pub fn active_config(&self) -> Option<s3::Config> {
+        self.config.borrow().clone().filter(|config| config.enabled)
+    }
+
     pub fn enabled(&self) -> bool {
         self.config.borrow().as_ref().is_some_and(|c| c.enabled)
     }
@@ -126,12 +132,22 @@ pub fn request_sync(state: &SharedState) {
         .id
         .clone();
     let cache = config.cache(&state.vault_path);
+    let cache_dir = cache.clone();
+    // Downloads are authenticated in the background before they are cached.
+    let key = state.vault.borrow().as_ref().unwrap().sync_key();
     job(
-        move || -> s3::Result<_> { sync::download(&mut s3::S3::connect(config)?, &cache) },
+        move || -> s3::Result<_> {
+            sync::download(
+                &mut s3::S3::connect(config)?,
+                &cache,
+                &sync::authentic(&key),
+            )
+        },
         clone!(
             #[weak]
             state,
             move |result| {
+                let cache = cache_dir;
                 if state.closing.get() {
                     return;
                 }
@@ -159,6 +175,11 @@ pub fn request_sync(state: &SharedState) {
                 };
                 if step.catalog.is_some() {
                     *state.cloud.catalog.borrow_mut() = step.catalog;
+                } else if step.next.is_err()
+                    && let Some(vault) = state.vault.borrow().as_ref()
+                {
+                    // Tampered or damaged downloads must not stay cached.
+                    let _ = sync::evict_unauthentic(&cache, vault);
                 }
                 if let Some(outcome) = step.installed {
                     refresh_credentials(&state);
@@ -716,10 +737,19 @@ pub fn show_recover(state: &SharedState, initial: &PasswordEntry) {
                 return;
             }
             if let Some(copies) = downloaded.borrow().as_ref() {
-                recover_downloaded(&state, dialog, &password, &selection, &message, copies);
+                recover_downloaded(
+                    &state,
+                    dialog,
+                    &password,
+                    &selection,
+                    &message,
+                    &config.cache(&state.vault_path),
+                    copies,
+                );
                 return;
             }
             let cache = config.cache(&state.vault_path);
+            let cache_dir = cache.clone();
             let config = config.clone();
             recover.set_sensitive(false);
             state.cloud.busy.set(true);
@@ -727,7 +757,10 @@ pub fn show_recover(state: &SharedState, initial: &PasswordEntry) {
             let weak_dialog = dialog.downgrade();
             let downloaded = downloaded.clone();
             job(
-                move || -> s3::Result<_> { sync::download(&mut s3::S3::connect(config)?, &cache) },
+                // No key before the password: copies are cached once recovered.
+                move || -> s3::Result<_> {
+                    sync::download(&mut s3::S3::connect(config)?, &cache, &sync::untrusted)
+                },
                 clone!(
                     #[weak]
                     state,
@@ -762,6 +795,7 @@ pub fn show_recover(state: &SharedState, initial: &PasswordEntry) {
                                     &password,
                                     &selection,
                                     &message,
+                                    &cache_dir,
                                     downloaded.borrow().as_ref().unwrap(),
                                 );
                             }
@@ -787,6 +821,7 @@ fn recover_downloaded(
     password: &PasswordEntry,
     selection: &gtk4::DropDown,
     message: &Label,
+    cache: &std::path::Path,
     copies: &[(String, Vec<u8>)],
 ) {
     let secret = Zeroizing::new(password.text().to_string());
@@ -799,6 +834,7 @@ fn recover_downloaded(
     };
     let copies = copies.to_vec();
     let path = state.vault_path.clone();
+    let cache = cache.to_path_buf();
     let choice = selection
         .is_visible()
         .then(|| selection.selected() as usize);
@@ -807,7 +843,7 @@ fn recover_downloaded(
     state.cloud.busy.set(true);
     job(
         move || -> s3::Result<Recovered> {
-            let catalog = sync::inspect_recovery(&path, copies, &secret, &keyfile)?;
+            let catalog = sync::inspect_recovery(&path, &cache, copies, &secret, &keyfile)?;
             let head = match choice {
                 _ if catalog.heads.len() == 1 => 0,
                 Some(head) => head,
@@ -820,16 +856,35 @@ fn recover_downloaded(
         clone!(
             #[weak]
             state,
-            #[weak]
+            #[weak_allow_none]
             dialog,
-            #[weak]
+            #[weak_allow_none]
             password,
-            #[weak]
+            #[weak_allow_none]
             selection,
-            #[weak]
+            #[weak_allow_none]
             message,
             move |result| {
+                // Always released, even if the dialog was closed meanwhile:
+                // otherwise every S3 operation would stay blocked.
                 state.cloud.busy.set(false);
+                if state.closing.get() {
+                    return;
+                }
+                let widgets = match (dialog, password, selection, message) {
+                    (Some(d), Some(p), Some(s), Some(m)) if d.is_visible() => Some((d, p, s, m)),
+                    _ => None,
+                };
+                let Some((dialog, password, selection, message)) = widgets else {
+                    // The recovery is already written to disk: show it anyway.
+                    if let Ok(Recovered::Done(vault, outcome)) = result {
+                        *state.vault.borrow_mut() = Some(vault);
+                        keyfiles::remember(&state);
+                        show_vault(&state);
+                        show_save_warning(&state, outcome);
+                    }
+                    return;
+                };
                 dialog.set_sensitive(true);
                 match result {
                     Ok(Recovered::Choose(catalog)) => {
@@ -855,7 +910,10 @@ fn recover_downloaded(
                         show_vault(&state);
                         show_save_warning(&state, outcome);
                     }
-                    Err(error) => message.set_text(&error),
+                    Err(error) => {
+                        password.set_text("");
+                        message.set_text(&error);
+                    }
                 }
             }
         ),

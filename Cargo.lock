@@ -685,6 +685,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "qrcode"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ace1a365f55004297f2cf24acfd96d02966246ca423385273b58a7dc873ee14d"
+
+[[package]]
 name = "quick-xml"
 version = "0.41.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -744,14 +750,29 @@ dependencies = [
 
 [[package]]
 name = "sekeeper"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
- "aes",
  "aes-gcm",
  "argon2",
  "gtk4",
  "libc",
+ "qrcode",
  "quick-xml",
+ "rand",
+ "sekeeper-core",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "zeroize",
+]
+
+[[package]]
+name = "sekeeper-core"
+version = "0.3.1"
+dependencies = [
+ "aes",
+ "aes-gcm",
+ "argon2",
  "rand",
  "serde",
  "serde_json",

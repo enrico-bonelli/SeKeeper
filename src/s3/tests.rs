@@ -311,3 +311,29 @@ fn aws_s3_live_roundtrip_and_conditional_upload() {
     assert!(remote.put(&id, b"different test data").is_err());
     assert_eq!(remote.get(&id).unwrap(), vault.encrypted());
 }
+
+#[test]
+fn an_endless_answer_is_cut_at_one_copy_and_curl_is_stopped() {
+    use std::os::unix::fs::PermissionsExt;
+    let directory = TestDirectory::new();
+    let program = directory.0.join("fake-curl");
+    // Like old curl on a chunked answer that ignores --max-filesize.
+    let script = "#!/bin/sh\ncat > /dev/null\nexec /usr/bin/yes sekeeper-public-test\n";
+    let outcome = storage::write_atomic(&program, script.as_bytes(), true).unwrap();
+    assert!(matches!(outcome, storage::SaveOutcome::Durable));
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let client = S3 {
+        config: config(),
+        credentials: Credentials {
+            access_key: "AKIAEXAMPLEONLY123456".into(),
+            secret_key: "PUBLIC-TEST-SECRET".into(),
+            session_token: String::new(),
+        },
+        deadline: Instant::now() + Duration::from_secs(10),
+    };
+    let started = Instant::now();
+    let result =
+        retry_while_script_is_busy(|| client.request_with(&program, "sekeeper/test.sek", "", None));
+    assert!(matches!(result, Err(e) if e.to_string().contains("troppo grande")));
+    assert!(started.elapsed() < Duration::from_secs(10));
+}

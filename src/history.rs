@@ -1,28 +1,10 @@
 use crate::storage::{self, SaveOutcome};
-use sha2::{Digest, Sha256};
+pub use sekeeper_core::limits::{
+    MAX_HISTORY_BYTES, MAX_LINEAGE, MAX_SNAPSHOT_BYTES, MAX_VERSIONS, RETAINED_VERSIONS,
+    fingerprint, hex, valid_id,
+};
 use std::io;
 use std::path::{Path, PathBuf};
-
-pub const MAX_SNAPSHOT_BYTES: u64 = 16 * 1024 * 1024;
-pub const MAX_HISTORY_BYTES: usize = 64 * 1024 * 1024;
-pub const MAX_VERSIONS: usize = 2048;
-pub const RETAINED_VERSIONS: usize = 30;
-pub const MAX_LINEAGE: usize = 65_536;
-
-pub fn valid_id(id: &str) -> bool {
-    id.len() == 32
-        && id
-            .bytes()
-            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
-}
-
-pub fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
-}
-
-pub fn fingerprint(bytes: &[u8]) -> String {
-    hex(&Sha256::digest(bytes))
-}
 
 pub fn directory(vault_path: &Path) -> PathBuf {
     storage::sibling(vault_path, ".history-v3")
@@ -82,6 +64,37 @@ pub fn load(directory: &Path) -> io::Result<Vec<(String, Vec<u8>)>> {
         result.push((id.to_string(), bytes));
     }
     Ok(result)
+}
+
+/// Removes the copies that `authentic` rejects. Downloads are cached before
+/// they can be authenticated, so a tampered or damaged object must not stay
+/// on disk, poisoning every later sync even after S3 is repaired.
+pub fn evict(directory: &Path, authentic: impl Fn(&str, &[u8]) -> bool) -> io::Result<usize> {
+    let directory = match storage::PrivateDir::open(directory, false) {
+        Ok(directory) => directory,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(0),
+        Err(error) => return Err(error),
+    };
+    let mut removed = 0;
+    for name in directory.entries()? {
+        let Some(id) = name.to_str().and_then(|name| name.strip_suffix(".sek")) else {
+            continue;
+        };
+        if !valid_id(id) {
+            continue;
+        }
+        let keep = directory
+            .read(&name, MAX_SNAPSHOT_BYTES)
+            .is_ok_and(|bytes| authentic(id, &bytes));
+        if !keep {
+            directory.remove(&name)?;
+            removed += 1;
+        }
+    }
+    if removed > 0 {
+        directory.sync()?;
+    }
+    Ok(removed)
 }
 
 pub fn prune(directory: &Path, obsolete: &std::collections::BTreeSet<String>) -> io::Result<()> {

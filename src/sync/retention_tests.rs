@@ -1,13 +1,14 @@
-use super::tests::{MemoryS3, PASSWORD, Workdir, add, durable, seed, send};
+use super::tests::{MemoryS3, PASSWORD, Workdir, add, durable, seed, send, trust};
 use super::*;
 use crate::{
     keyfile::KeyFile,
     model::RevisionLink,
     storage::{self, FailureStage},
 };
+use sekeeper_core::catalog::VersionDiff;
 
 fn compact(vault: &mut Vault, path: &Path, remote: &mut MemoryS3, cache: &Path) -> Catalog {
-    let copies = download(remote, cache).unwrap();
+    let copies = download(remote, cache, &trust).unwrap();
     let revision = vault.data.revision.as_ref().unwrap().id.clone();
     let step = reconcile(vault, path, copies, &revision, true);
     let Ok(Next::Publish { publication, .. }) = step.next else {
@@ -58,7 +59,7 @@ fn thirty_complete_copies_recovery_old_pc_and_offline_conflicts_survive_pruning(
 
     // A fresh installation needs only retained payloads, including the encrypted
     // ancestry, and never has to retrieve deleted historical vault contents.
-    let copies = download(&mut remote, &work.0.join("new-cache")).unwrap();
+    let copies = download(&mut remote, &work.0.join("new-cache"), &trust).unwrap();
     assert_eq!(copies.len(), 30);
     let fresh = Vault::from_encrypted(
         &work.vault("new"),
@@ -83,7 +84,7 @@ fn thirty_complete_copies_recovery_old_pc_and_offline_conflicts_survive_pruning(
     let b_catalog = Catalog::build(
         &b,
         &work.vault("b"),
-        download(&mut remote, &b_cache).unwrap(),
+        download(&mut remote, &b_cache, &trust).unwrap(),
     )
     .unwrap();
     let Decision::FastForward(id) = b_catalog.decision(&old_id) else {
@@ -109,7 +110,7 @@ fn thirty_complete_copies_recovery_old_pc_and_offline_conflicts_survive_pruning(
     let mut conflict = Catalog::build(
         &offline,
         &path,
-        download(&mut remote, &offline_cache).unwrap(),
+        download(&mut remote, &offline_cache, &trust).unwrap(),
     )
     .unwrap();
     assert!(matches!(conflict.decision(&offline_id), Decision::Conflict));
@@ -248,9 +249,9 @@ fn download_restarts_when_a_listed_object_is_pruned_and_ignores_obsolete_cache_e
             .insert(id.clone(), b"public test ciphertext".to_vec());
     }
     remote.vanish_on_get = Some(ids[0].clone());
-    assert_eq!(download(&mut remote, &cache).unwrap().len(), 2);
+    assert_eq!(download(&mut remote, &cache, &trust).unwrap().len(), 2);
     history::remember(&cache, &ids[0], b"old cached ciphertext").unwrap();
-    let copies = download(&mut remote, &cache).unwrap();
+    let copies = download(&mut remote, &cache, &trust).unwrap();
     assert_eq!(copies.len(), 2);
     assert!(copies.iter().all(|(id, _)| *id != ids[0]));
 }
@@ -312,7 +313,8 @@ fn a_concurrent_new_branch_is_never_deleted_by_an_already_prepared_cleanup() {
     publication.send(&mut remote, &cache, &path).unwrap();
     assert!(remote.objects.contains_key(&id));
     assert_eq!(remote.objects.len(), 31);
-    let catalog = Catalog::build(&a, &path, download(&mut remote, &cache).unwrap()).unwrap();
+    let catalog =
+        Catalog::build(&a, &path, download(&mut remote, &cache, &trust).unwrap()).unwrap();
     assert!(matches!(
         catalog.decision(&a.data.revision.as_ref().unwrap().id),
         Decision::Conflict
@@ -405,7 +407,7 @@ fn reconcile_defers_an_update_for_the_editor_then_installs_it() {
     send(&a, &work.vault("a"), &mut remote, &cache_a);
     let revision = b.data.revision.as_ref().unwrap().id.clone();
 
-    let copies = download(&mut remote, &cache_b).unwrap();
+    let copies = download(&mut remote, &cache_b, &trust).unwrap();
     let step = reconcile(
         &mut b,
         &path_b,
@@ -443,7 +445,7 @@ fn reconcile_reports_conflicts_and_compare_names_the_differences() {
     let cache_a = work.0.join("cache-a");
     let cache_b = work.0.join("cache-b");
     send(&a, &work.vault("a"), &mut remote, &cache_a);
-    let copies = download(&mut remote, &cache_b).unwrap();
+    let copies = download(&mut remote, &cache_b, &trust).unwrap();
     let revision = b.data.revision.as_ref().unwrap().id.clone();
     durable(
         reconcile(&mut b, &work.vault("b"), copies, &revision, true)
@@ -457,7 +459,7 @@ fn reconcile_reports_conflicts_and_compare_names_the_differences() {
     durable(a.update_credential(changed).unwrap());
     add(&mut b, "solo B");
     send(&a, &work.vault("a"), &mut remote, &cache_a);
-    let copies = download(&mut remote, &cache_b).unwrap();
+    let copies = download(&mut remote, &cache_b, &trust).unwrap();
     let revision = b.data.revision.as_ref().unwrap().id.clone();
     let step = reconcile(&mut b, &work.vault("b"), copies, &revision, true);
     assert!(matches!(
@@ -485,19 +487,31 @@ fn recovery_requires_both_factors_and_creates_the_chosen_version() {
     let cache = work.0.join("cache");
     send(&a, &work.vault("a"), &mut remote, &cache);
     send(&b, &work.vault("b"), &mut remote, &cache);
-    let copies = download(&mut remote, &work.0.join("cache-new")).unwrap();
+    let new_cache = work.0.join("cache-new");
+    let copies = download(&mut remote, &new_cache, &trust).unwrap();
     let path = work.vault("new");
-    assert!(inspect_recovery(&path, Vec::new(), PASSWORD, &KeyFile::test_key()).is_err());
     assert!(
         inspect_recovery(
             &path,
+            &new_cache,
+            Vec::new(),
+            PASSWORD,
+            &KeyFile::test_key()
+        )
+        .is_err()
+    );
+    assert!(
+        inspect_recovery(
+            &path,
+            &new_cache,
             copies.clone(),
             "password errata",
             &KeyFile::test_key()
         )
         .is_err()
     );
-    let catalog = inspect_recovery(&path, copies, PASSWORD, &KeyFile::test_key()).unwrap();
+    let catalog =
+        inspect_recovery(&path, &new_cache, copies, PASSWORD, &KeyFile::test_key()).unwrap();
     assert!(!path.exists());
     assert_eq!(catalog.heads.len(), 2);
     let (vault, outcome) =
@@ -506,4 +520,90 @@ fn recovery_requires_both_factors_and_creates_the_chosen_version() {
     assert!(path.exists());
     assert_eq!(vault.data.revision.as_ref().unwrap().parents.len(), 2);
     assert_eq!(vault.data.credentials.len(), 1);
+}
+
+fn cached_ids(cache: &Path) -> Vec<String> {
+    history::load(cache)
+        .unwrap()
+        .into_iter()
+        .map(|(id, _)| id)
+        .collect()
+}
+
+#[test]
+fn only_authenticated_downloads_reach_the_cache() {
+    let work = Workdir::new();
+    let (mut a, _) = seed(&work);
+    add(&mut a, "uno");
+    let mut remote = MemoryS3::default();
+    send(&a, &work.vault("a"), &mut remote, &work.0.join("cache"));
+    let genuine: Vec<String> = remote.objects.keys().cloned().collect();
+    // A forged object, and a genuine copy republished under another name.
+    let forged = format!("{:032x}", 0xbad_u128);
+    let renamed = format!("{:032x}", 0xbee_u128);
+    let first = remote.objects[&genuine[0]].clone();
+    remote
+        .objects
+        .insert(forged.clone(), b"public test forged ciphertext".to_vec());
+    remote.objects.insert(renamed.clone(), first);
+
+    let cache = work.0.join("cache-b");
+    let key = a.sync_key();
+    let copies = download(&mut remote, &cache, &authentic(&key)).unwrap();
+    assert!(Catalog::build(&a, &work.vault("a"), copies).is_err());
+    let left = cached_ids(&cache);
+    assert_eq!(left.len(), genuine.len());
+    assert!(!left.contains(&forged) && !left.contains(&renamed));
+
+    // Once S3 is repaired, sync works again without touching the cache.
+    remote.objects.remove(&forged);
+    remote.objects.remove(&renamed);
+    let reads = remote.reads;
+    let copies = download(&mut remote, &cache, &authentic(&key)).unwrap();
+    assert_eq!(
+        reads, remote.reads,
+        "authenticated copies come from the cache"
+    );
+    assert!(Catalog::build(&a, &work.vault("a"), copies).is_ok());
+
+    // A recovery caches nothing until the copies are authenticated.
+    let recovery = work.0.join("cache-recovery");
+    let copies = download(&mut remote, &recovery, &untrusted).unwrap();
+    assert!(cached_ids(&recovery).is_empty());
+    inspect_recovery(
+        &work.vault("new"),
+        &recovery,
+        copies,
+        PASSWORD,
+        &KeyFile::test_key(),
+    )
+    .unwrap();
+    assert_eq!(cached_ids(&recovery).len(), genuine.len());
+}
+
+#[test]
+fn caches_poisoned_by_older_versions_are_cleaned_after_a_failed_check() {
+    let work = Workdir::new();
+    let (mut a, _) = seed(&work);
+    add(&mut a, "uno");
+    let mut remote = MemoryS3::default();
+    send(&a, &work.vault("a"), &mut remote, &work.0.join("cache"));
+    let forged = format!("{:032x}", 0xbad_u128);
+    let renamed = format!("{:032x}", 0xbee_u128);
+    let first = remote.objects.values().next().unwrap().clone();
+    remote
+        .objects
+        .insert(forged.clone(), b"public test forged ciphertext".to_vec());
+    remote.objects.insert(renamed.clone(), first);
+    let cache = work.0.join("cache-b");
+    let copies = download(&mut remote, &cache, &trust).unwrap();
+    assert!(Catalog::build(&a, &work.vault("a"), copies).is_err());
+    // Both the forged bytes and the genuine copy under a wrong name go.
+    assert_eq!(evict_unauthentic(&cache, &a).unwrap(), 2);
+    let left = cached_ids(&cache);
+    assert!(!left.is_empty() && !left.contains(&forged) && !left.contains(&renamed));
+    remote.objects.remove(&forged);
+    remote.objects.remove(&renamed);
+    let copies = download(&mut remote, &cache, &trust).unwrap();
+    assert!(Catalog::build(&a, &work.vault("a"), copies).is_ok());
 }

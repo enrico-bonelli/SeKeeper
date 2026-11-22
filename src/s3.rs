@@ -1,7 +1,7 @@
 use crate::{helpers, history, storage};
 use serde::{Deserialize, Serialize};
 use std::fmt::Write as _;
-use std::io::Write as _;
+use std::io::{Read as _, Write as _};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::{Duration, Instant};
@@ -363,18 +363,39 @@ impl S3 {
             .map_err(|_| {
                 error("curl non disponibile: serve curl 7.75 o successivo con supporto AWS SigV4")
             })?;
-        child
-            .stdin
-            .take()
-            .ok_or_else(|| error("impossibile avviare curl"))?
-            .write_all(config.as_bytes())?;
-        let output = child.wait_with_output()?;
-        if !output.status.success() {
+        // Every exit path reaps curl: a failed write or an oversized answer
+        // must not leave a zombie or a transfer running in the background.
+        let stop = |child: &mut std::process::Child, message: &str| {
+            let _ = child.kill();
+            let _ = child.wait();
+            error(message)
+        };
+        let written = match child.stdin.take() {
+            Some(mut stdin) => stdin.write_all(config.as_bytes()),
+            None => Err(std::io::ErrorKind::BrokenPipe.into()),
+        };
+        if written.is_err() {
+            return Err(stop(&mut child, "impossibile avviare curl"));
+        }
+        // Old curl ignores --max-filesize on chunked answers: read at most one
+        // copy plus the status line, instead of buffering whatever arrives.
+        let limit = history::MAX_SNAPSHOT_BYTES + 4;
+        let mut bytes = Vec::new();
+        let Some(stdout) = child.stdout.take() else {
+            return Err(stop(&mut child, "impossibile avviare curl"));
+        };
+        if stdout.take(limit + 1).read_to_end(&mut bytes).is_err() {
+            return Err(stop(&mut child, "risposta S3 non leggibile"));
+        }
+        if bytes.len() as u64 > limit {
+            return Err(stop(&mut child, "risposta S3 troppo grande"));
+        }
+        if !child.wait()?.success() {
             return Err(error(
                 "connessione S3 non riuscita: verifica rete, curl e configurazione; riproverò più tardi",
             ));
         }
-        parse_response(output.stdout)
+        parse_response(bytes)
     }
     fn key(&self, id: &str) -> Result<String> {
         if !history::valid_id(id) {
@@ -383,6 +404,10 @@ impl S3 {
         Ok(format!("{}{id}.sek", self.config.remote_prefix()))
     }
 }
+
+/// MAX_VERSIONS copies fit in three pages of 1000 keys; a margin covers
+/// pages S3 returns partially filled.
+const MAX_LIST_PAGES: usize = 16;
 
 impl RemoteStore for S3 {
     fn list(&mut self) -> Result<Vec<String>> {
@@ -425,6 +450,10 @@ impl RemoteStore for S3 {
                 .next_token
                 .filter(|s| !s.is_empty())
                 .ok_or_else(|| error("elenco S3 incompleto"))?;
+            // Empty pages with fresh tokens would otherwise go on until the deadline.
+            if seen_tokens.len() >= MAX_LIST_PAGES {
+                return Err(error("elenco S3 troppo lungo"));
+            }
             if !seen_tokens.insert(next.clone()) {
                 return Err(error("paginazione S3 non valida"));
             }

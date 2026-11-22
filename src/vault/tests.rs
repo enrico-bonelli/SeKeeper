@@ -2,8 +2,16 @@ use super::*;
 use crate::keyfile::KeyFile;
 use crate::model::Credential;
 use crate::storage::{FailureStage, inject_failure};
+use aes_gcm::aead::{Aead, KeyInit, Payload};
+use aes_gcm::{Aes256Gcm, Nonce};
+use argon2::{Algorithm, Argon2, Params, Version};
+use sekeeper_core::format::{
+    HEADER_LEN, ITERATIONS, KDF_LOCK, MEMORY_KIB, NONCE_LEN, NONCE_START, PARALLELISM, SALT_START,
+    TAG_LEN, header,
+};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
+use zeroize::Zeroizing;
 
 const PASSWORD: &str = "laguna cedro nuvola marmo sentiero";
 
@@ -90,13 +98,11 @@ fn neither_factor_alone_opens_the_vault_and_wrong_key_cannot_restore_it() {
     durable(vault.add_credential(credential("segreto")).unwrap());
     let original = vault.encrypted().to_vec();
     let password_only = {
-        let _guard = KDF_TEST_LOCK
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
+        let _guard = KDF_LOCK.lock().unwrap_or_else(|error| error.into_inner());
         let mut output = Zeroizing::new([0u8; 32]);
         let params = Params::new(MEMORY_KIB, ITERATIONS, PARALLELISM, Some(32)).unwrap();
         Argon2::new(Algorithm::Argon2id, Version::V0x13, params)
-            .hash_password_into(PASSWORD.as_bytes(), &vault.salt, output.as_mut_slice())
+            .hash_password_into(PASSWORD.as_bytes(), vault.key.salt(), output.as_mut_slice())
             .unwrap();
         output
     };
@@ -175,7 +181,7 @@ fn v3_requires_header_authentication_and_rejects_weakened_or_excessive_costs() {
     let test = TestVault::new();
     let vault = test.create();
     let original = vault.encrypted();
-    let cipher = Aes256Gcm::new_from_slice(vault.key.as_slice()).unwrap();
+    let cipher = Aes256Gcm::new_from_slice(vault.key.raw().as_slice()).unwrap();
     assert!(
         cipher
             .decrypt(
@@ -185,7 +191,7 @@ fn v3_requires_header_authentication_and_rejects_weakened_or_excessive_costs() {
             .is_err()
     );
     let nonce = [42; NONCE_LEN];
-    let mut forged = header(&vault.salt, &nonce);
+    let mut forged = header(vault.key.salt(), &nonce);
     let ciphertext = cipher
         .encrypt(Nonce::from_slice(&nonce), b"{}".as_ref())
         .unwrap();

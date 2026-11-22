@@ -3,49 +3,13 @@ use crate::keyfile::KeyFile;
 use crate::model::{Revision, RevisionLink, VaultData};
 use crate::security::validate_new_password;
 use crate::storage::{self, SaveOutcome};
-use aes_gcm::aead::{Aead, KeyInit, OsRng, Payload};
-use aes_gcm::{Aes256Gcm, Nonce};
-use argon2::{Algorithm, Argon2, Block, Params, Version};
-use rand::RngCore;
+use rand::{RngCore, rngs::OsRng};
+use sekeeper_core::format::{FormatError, VaultKey};
 use std::io;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
-use zeroize::Zeroizing;
 
-const MAGIC: &[u8; 8] = b"SEKEEPER";
-const VERSION: u8 = 3;
-const SALT_LEN: usize = 16;
-const NONCE_LEN: usize = 12;
-const SALT_START: usize = 24;
-const NONCE_START: usize = SALT_START + SALT_LEN;
-const HEADER_LEN: usize = NONCE_START + NONCE_LEN;
-const TAG_LEN: usize = 16;
 pub const BACKUP_COUNT: usize = 10;
-const MEMORY_KIB: u32 = 256 * 1024;
-const ITERATIONS: u32 = 3;
-const PARALLELISM: u32 = 4;
-
-fn header(salt: &[u8; SALT_LEN], nonce: &[u8; NONCE_LEN]) -> Vec<u8> {
-    let mut header = Vec::with_capacity(HEADER_LEN);
-    header.extend_from_slice(MAGIC);
-    header.extend_from_slice(&[VERSION, 2, 0x13, 1]); // Argon2id, Argon2 v19, AES-256-GCM
-    for parameter in [MEMORY_KIB, ITERATIONS, PARALLELISM] {
-        header.extend_from_slice(&parameter.to_le_bytes());
-    }
-    header.extend_from_slice(salt);
-    header.extend_from_slice(nonce);
-    header
-}
-
-fn validate_header(encrypted: &[u8]) -> Result<(), VaultError> {
-    if encrypted.len() < HEADER_LEN + TAG_LEN
-        || encrypted.len() as u64 > history::MAX_SNAPSHOT_BYTES
-        || encrypted[..SALT_START] != header(&[0; SALT_LEN], &[0; NONCE_LEN])[..SALT_START]
-    {
-        return Err(VaultError::InvalidFormat);
-    }
-    Ok(())
-}
 
 #[derive(Debug, Error)]
 pub enum VaultError {
@@ -73,10 +37,21 @@ pub enum VaultError {
     Io(#[from] io::Error),
 }
 
+impl From<FormatError> for VaultError {
+    fn from(error: FormatError) -> Self {
+        match error {
+            FormatError::InvalidPasswordOrCorrupted => Self::InvalidPasswordOrCorrupted,
+            FormatError::InvalidFormat => Self::InvalidFormat,
+            FormatError::KeyDerivation => Self::KeyDerivation,
+            FormatError::Encryption => Self::Encryption,
+            FormatError::InvalidData => Self::InvalidData,
+        }
+    }
+}
+
 pub struct Vault {
     path: PathBuf,
-    key: Zeroizing<[u8; 32]>,
-    salt: [u8; SALT_LEN],
+    key: VaultKey,
     previous_ciphertext: Option<Vec<u8>>,
     device: String,
     // Set once this session uses S3. Without it nothing needs the complete
@@ -107,12 +82,10 @@ impl Vault {
         if storage::exists(path)? || !Self::available_backups(path).is_empty() {
             return Err(VaultError::AlreadyExists);
         }
-        let salt = random_bytes::<SALT_LEN>();
-        let key = derive_key(password, &salt, keyfile)?;
+        let key = VaultKey::generate(password, keyfile.core())?;
         let mut vault = Self {
             path: path.to_path_buf(),
             key,
-            salt,
             previous_ciphertext: None,
             device: "Questo PC".into(),
             sync_active: false,
@@ -139,14 +112,10 @@ impl Vault {
         password: &str,
         keyfile: &KeyFile,
     ) -> Result<Self, VaultError> {
-        validate_header(&encrypted)?;
-        let mut salt = [0u8; SALT_LEN];
-        salt.copy_from_slice(&encrypted[SALT_START..NONCE_START]);
-        let key = derive_key(password, &salt, keyfile)?;
+        let key = VaultKey::for_snapshot(&encrypted, password, keyfile.core())?;
         let mut vault = Self {
             path: path.to_path_buf(),
             key,
-            salt,
             previous_ciphertext: None,
             device: "Questo PC".into(),
             sync_active: false,
@@ -288,83 +257,11 @@ impl Vault {
     }
 
     fn encode(&self) -> Result<Vec<u8>, VaultError> {
-        if self.data.lineage.len() > history::MAX_LINEAGE {
-            return Err(VaultError::InvalidData);
-        }
-        let cipher =
-            Aes256Gcm::new_from_slice(self.key.as_slice()).map_err(|_| VaultError::Encryption)?;
-        let nonce = random_bytes::<NONCE_LEN>();
-        let plaintext =
-            Zeroizing::new(serde_json::to_vec(&self.data).map_err(|_| VaultError::InvalidData)?);
-        if plaintext.len() as u64 + (HEADER_LEN + TAG_LEN) as u64 > history::MAX_SNAPSHOT_BYTES {
-            return Err(VaultError::InvalidData);
-        }
-        let mut output = header(&self.salt, &nonce);
-        let ciphertext = cipher
-            .encrypt(
-                Nonce::from_slice(&nonce),
-                Payload {
-                    msg: plaintext.as_slice(),
-                    aad: &output,
-                },
-            )
-            .map_err(|_| VaultError::Encryption)?;
-        output.extend_from_slice(&ciphertext);
-        Ok(output)
+        Ok(self.key.seal(&self.data)?)
     }
 
     fn decode(&self, encrypted: &[u8]) -> Result<VaultData, VaultError> {
-        validate_header(encrypted)?;
-        if encrypted[SALT_START..NONCE_START] != self.salt {
-            return Err(VaultError::InvalidFormat);
-        }
-        let cipher =
-            Aes256Gcm::new_from_slice(self.key.as_slice()).map_err(|_| VaultError::Encryption)?;
-        let plaintext = Zeroizing::new(
-            cipher
-                .decrypt(
-                    Nonce::from_slice(&encrypted[NONCE_START..HEADER_LEN]),
-                    Payload {
-                        msg: &encrypted[HEADER_LEN..],
-                        aad: &encrypted[..HEADER_LEN],
-                    },
-                )
-                .map_err(|_| VaultError::InvalidPasswordOrCorrupted)?,
-        );
-        let data: VaultData =
-            serde_json::from_slice(&plaintext).map_err(|_| VaultError::InvalidData)?;
-        if let Some(revision) = &data.revision
-            && (revision.vault_id != self.vault_id()
-                || !history::valid_id(&revision.id)
-                || revision.parents.len() > 128
-                || revision.device.len() > 128
-                || revision
-                    .parents
-                    .iter()
-                    .any(|id| !history::valid_id(id) || id == &revision.id))
-        {
-            return Err(VaultError::InvalidData);
-        }
-        let mut seen = std::collections::BTreeSet::new();
-        if data.lineage.len() > history::MAX_LINEAGE
-            || data.revision.is_none() && !data.lineage.is_empty()
-            || data.lineage.iter().any(|link| {
-                !history::valid_id(&link.id)
-                    || !seen.insert(&link.id)
-                    || data
-                        .revision
-                        .as_ref()
-                        .is_some_and(|revision| revision.id == link.id)
-                    || link.parents.len() > 128
-                    || link
-                        .parents
-                        .iter()
-                        .any(|id| !history::valid_id(id) || id == &link.id)
-            })
-        {
-            return Err(VaultError::InvalidData);
-        }
-        Ok(data)
+        Ok(self.key.open(encrypted)?)
     }
 
     fn commit(&mut self, output: Vec<u8>) -> Result<SaveOutcome, VaultError> {
@@ -405,7 +302,7 @@ impl Vault {
     }
 
     fn vault_id(&self) -> String {
-        history::hex(&self.salt)
+        self.key.vault_id()
     }
 
     fn advance_revision(&mut self, parents: Option<Vec<String>>) {
@@ -422,6 +319,12 @@ impl Vault {
                 device: self.device.clone(),
             });
         }
+    }
+
+    /// A copy of the vault key, for a background job that must authenticate
+    /// downloads before caching them. It is wiped when dropped.
+    pub fn sync_key(&self) -> VaultKey {
+        self.key.clone()
     }
 
     pub fn encrypted(&self) -> &[u8] {
@@ -651,44 +554,6 @@ fn require_durable(outcome: SaveOutcome) -> Result<(), VaultError> {
     }
 }
 
-fn derive_key(
-    password: &str,
-    salt: &[u8],
-    keyfile: &KeyFile,
-) -> Result<Zeroizing<[u8; 32]>, VaultError> {
-    let mut key = Zeroizing::new([0u8; 32]);
-    // Tests use the real production profile. Serialize their KDF allocations to
-    // keep a parallel test runner from allocating many GiB at once.
-    #[cfg(test)]
-    let _guard = KDF_TEST_LOCK
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let params = Params::new(MEMORY_KIB, ITERATIONS, PARALLELISM, Some(32))
-        .map_err(|_| VaultError::KeyDerivation)?;
-    let mut memory = Zeroizing::new(Vec::new());
-    memory
-        .try_reserve_exact(params.block_count())
-        .map_err(|_| VaultError::KeyDerivation)?;
-    memory.resize(params.block_count(), Block::default());
-    // RFC 9106 secret input K: both independent factors enter the KDF itself.
-    // Neither a password verifier nor a key-file verifier is stored in the vault.
-    Argon2::new_with_secret(
-        keyfile.secret(),
-        Algorithm::Argon2id,
-        Version::V0x13,
-        params,
-    )
-    .map_err(|_| VaultError::KeyDerivation)?
-    .hash_password_into_with_memory(
-        password.as_bytes(),
-        salt,
-        key.as_mut_slice(),
-        memory.as_mut_slice(),
-    )
-    .map_err(|_| VaultError::KeyDerivation)?;
-    Ok(key)
-}
-
 fn new_id() -> String {
     history::hex(&random_bytes::<16>())
 }
@@ -705,9 +570,6 @@ fn random_bytes<const N: usize>() -> [u8; N] {
     OsRng.fill_bytes(&mut bytes);
     bytes
 }
-
-#[cfg(test)]
-static KDF_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[cfg(test)]
 mod tests;

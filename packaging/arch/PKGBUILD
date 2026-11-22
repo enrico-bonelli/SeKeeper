@@ -1,7 +1,7 @@
 # Build from a complete checkout: cd packaging/arch && makepkg -si
 # Local source files are copied explicitly, without Git or a remote repository.
 pkgname=sekeeper
-pkgver=0.3.0
+pkgver=0.3.1
 pkgrel=1
 pkgdesc='GTK4 password manager with an encrypted vault, key file and optional AWS S3 sync'
 arch=('x86_64')
@@ -18,10 +18,13 @@ options=('!lto' '!debug')
 prepare() {
   local _project_root="$(cd "$startdir/../.." && pwd)"
   local _source_dir="$srcdir/$pkgname-$pkgver"
-  # Only the generated source snapshot is replaced; the checkout is untouched.
-  rm -rf -- "$_source_dir"
-  install -d "$_source_dir"
+  # The shared vault engine is a sibling checkout, referenced as ../sekeeper-core.
+  local _core_root="$(cd "$_project_root/../sekeeper-core" && pwd)"
+  # Only the generated source snapshots are replaced; the checkouts are untouched.
+  rm -rf -- "$_source_dir" "$srcdir/sekeeper-core"
+  install -d "$_source_dir" "$srcdir/sekeeper-core"
   cp -a -- "$_project_root"/{Cargo.toml,Cargo.lock,build.rs,LICENSE,README.md,src,tests,data} "$_source_dir/"
+  cp -a -- "$_core_root"/{Cargo.toml,src,tests} "$srcdir/sekeeper-core/"
   cd "$_source_dir"
   cargo fetch --locked --target "${CARCH}-unknown-linux-gnu"
 }

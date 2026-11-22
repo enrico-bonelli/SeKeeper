@@ -1,31 +1,44 @@
 use crate::history;
 use crate::keyfile::KeyFile;
-use crate::model::{Credential, Revision, RevisionLink};
+use crate::model::RevisionLink;
 use crate::s3::{CloudError, RemoteStore, Result, error};
 use crate::storage::SaveOutcome;
 use crate::vault::Vault;
+use sekeeper_core::format::VaultKey;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-#[derive(Clone)]
-pub struct Snapshot {
-    pub id: String,
-    pub bytes: Vec<u8>,
-    pub revision: Revision,
-}
-pub struct Catalog {
-    pub snapshots: BTreeMap<String, Snapshot>,
-    pub heads: Vec<String>,
-    links: BTreeMap<String, Vec<String>>,
-    order: BTreeMap<String, usize>,
-}
-pub enum Decision {
-    Current,
-    FastForward(String),
-    Conflict,
+pub use sekeeper_core::catalog::{Catalog, CatalogError, Decision, Snapshot, compare, merge_link};
+
+impl From<CatalogError> for CloudError {
+    fn from(value: CatalogError) -> Self {
+        CloudError::Message(value.0)
+    }
 }
 
-pub fn download(remote: &mut impl RemoteStore, cache: &Path) -> Result<Vec<(String, Vec<u8>)>> {
+/// Checks that a downloaded copy belongs to the vault and carries the
+/// revision its name announces. Only such copies are ever written to the cache.
+pub fn authentic(key: &VaultKey) -> impl Fn(&str, &[u8]) -> bool + '_ {
+    move |id, bytes| {
+        key.read_sync_metadata(bytes)
+            .is_ok_and(|(revision, _)| revision.id == id)
+    }
+}
+
+/// For a download that cannot authenticate yet, such as a recovery before the
+/// password is known: nothing is cached.
+pub fn untrusted(_: &str, _: &[u8]) -> bool {
+    false
+}
+
+/// Fetches the listed copies, reusing the cache. A new download is cached only
+/// if `authentic` accepts it: tampered objects stay in memory, fail the
+/// catalog check and are fetched again next time, never poisoning the disk.
+pub fn download(
+    remote: &mut impl RemoteStore,
+    cache: &Path,
+    authentic: &dyn Fn(&str, &[u8]) -> bool,
+) -> Result<Vec<(String, Vec<u8>)>> {
     // A concurrent client may prune between LIST and GET. Restart from a fresh
     // listing instead of treating an intentional deletion as a corrupt history.
     for attempt in 0..3 {
@@ -57,7 +70,9 @@ pub fn download(remote: &mut impl RemoteStore, cache: &Path) -> Result<Vec<(Stri
                     if total + bytes.len() > history::MAX_HISTORY_BYTES {
                         return Err(error("storico S3 troppo grande"));
                     }
-                    history::remember(cache, id, &bytes)?;
+                    if authentic(id, &bytes) {
+                        history::remember(cache, id, &bytes)?;
+                    }
                     bytes
                 }
                 Err(e) => return Err(e.into()),
@@ -75,6 +90,16 @@ pub fn download(remote: &mut impl RemoteStore, cache: &Path) -> Result<Vec<(Stri
     Err(error(
         "lo storico S3 sta cambiando: riprova la sincronizzazione",
     ))
+}
+
+/// After a failed sync or recovery: drops cached downloads that do not
+/// belong to this vault, so the next attempt fetches them again.
+pub fn evict_unauthentic(cache: &Path, vault: &Vault) -> std::io::Result<usize> {
+    history::evict(cache, |id, bytes| {
+        vault
+            .read_sync_metadata(bytes)
+            .is_ok_and(|(revision, _)| revision.id == id)
+    })
 }
 
 pub fn publish(
@@ -95,8 +120,17 @@ pub fn publish(
     Ok(())
 }
 
-impl Catalog {
-    pub fn build(vault: &Vault, vault_path: &Path, remote: Vec<(String, Vec<u8>)>) -> Result<Self> {
+/// The parts of the revision catalog that touch this computer: local history,
+/// the lineage checkpoint written into the vault, and the cleanup plan.
+pub trait LocalCatalog {
+    fn build(vault: &Vault, vault_path: &Path, remote: Vec<(String, Vec<u8>)>) -> Result<Catalog>;
+    fn prepare_retention(&mut self, vault: &mut Vault) -> Result<SaveOutcome>;
+    fn publication(&self, vault: &Vault) -> Result<Publication>;
+    fn retained(&mut self, publication: &Publication);
+}
+
+impl LocalCatalog for Catalog {
+    fn build(vault: &Vault, vault_path: &Path, remote: Vec<(String, Vec<u8>)>) -> Result<Catalog> {
         let mut copies = remote;
         // Remote copies must all belong to this vault. Local leftovers of a
         // vault that was deleted and recreated are unrelated, not an attack.
@@ -108,146 +142,12 @@ impl Catalog {
         if let Some(revision) = &vault.data.revision {
             copies.push((revision.id.clone(), vault.encrypted().to_vec()));
         }
-        let mut snapshots: BTreeMap<String, Snapshot> = BTreeMap::new();
-        let mut size = 0usize;
-        let mut links = BTreeMap::new();
-        for (id, bytes) in copies {
-            if let Some(previous) = snapshots.get(&id) {
-                if previous.bytes != bytes {
-                    return Err(error(
-                        "copie diverse hanno lo stesso identificativo; sincronizzazione interrotta",
-                    ));
-                }
-                continue;
-            }
-            size += bytes.len();
-            if snapshots.len() >= history::MAX_VERSIONS || size > history::MAX_HISTORY_BYTES {
-                return Err(error(
-                    "storico troppo grande: archivia alcune copie prima di sincronizzare",
-                ));
-            }
-            let (revision, ancestry) = vault.read_sync_metadata(&bytes).map_err(|_| error(
-                "una copia S3 è danneggiata o appartiene a un altro vault: verifica il prefisso scelto; nessuna copia locale è stata sostituita"))?;
-            if revision.id != id {
-                return Err(error(
-                    "identificativo S3 non corrispondente al contenuto autenticato",
-                ));
-            }
-            for link in ancestry {
-                merge_link(&mut links, &link.id, &link.parents)?;
-            }
-            merge_link(&mut links, &revision.id, &revision.parents)?;
-            snapshots.insert(
-                id.clone(),
-                Snapshot {
-                    id,
-                    bytes,
-                    revision,
-                },
-            );
-        }
-        if snapshots.is_empty() {
-            return Err(error("nessuna copia versionata disponibile"));
-        }
-        // The small, authenticated links replace complete historical vaults.
-        // Missing links, contradictions, cycles and detached fabricated nodes
-        // still fail closed, even when all remaining snapshots decrypt.
-        let mut children: BTreeMap<String, Vec<String>> = BTreeMap::new();
-        let mut pending = BTreeMap::new();
-        for (id, parents) in &links {
-            pending.insert(id.clone(), parents.len());
-            for parent in parents {
-                if !links.contains_key(parent) {
-                    return Err(error(
-                        "storico incompleto: manca una versione precedente; nessun vault è stato sostituito",
-                    ));
-                }
-                children.entry(parent.clone()).or_default().push(id.clone());
-            }
-        }
-        let mut ready: Vec<String> = pending
-            .iter()
-            .filter(|(_, n)| **n == 0)
-            .map(|(id, _)| id.clone())
-            .collect();
-        let mut visited = 0usize;
-        while let Some(id) = ready.pop() {
-            visited += 1;
-            if let Some(next) = children.get(&id) {
-                for child in next {
-                    let count = pending.get_mut(child).expect("nodo verificato");
-                    *count -= 1;
-                    if *count == 0 {
-                        ready.push(child.clone());
-                    }
-                }
-            }
-        }
-        if visited != links.len() {
-            return Err(error("relazioni tra versioni non valide"));
-        }
-        let heads: Vec<String> = links
-            .keys()
-            .filter(|id| !children.contains_key(*id))
-            .cloned()
-            .collect();
-        if heads.iter().any(|id| !snapshots.contains_key(id)) {
-            return Err(error(
-                "storico incompleto: manca il contenuto di una versione corrente",
-            ));
-        }
-        // Reverse topological order: descendants always precede their ancestors,
-        // while authenticated dates choose between independent branches. This
-        // keeps a fresh short offline branch ahead of an old long branch.
-        let mut remaining: BTreeMap<String, usize> = links
-            .keys()
-            .map(|id| (id.clone(), children.get(id).map_or(0, Vec::len)))
-            .collect();
-        let date = |id: &String| snapshots.get(id).map_or(0, |s| s.revision.created_at);
-        let mut ready: BTreeSet<(u64, String)> =
-            heads.iter().map(|id| (date(id), id.clone())).collect();
-        let mut order = BTreeMap::new();
-        while let Some((_, id)) = ready.pop_last() {
-            order.insert(id.clone(), order.len());
-            for parent in &links[&id] {
-                let count = remaining.get_mut(parent).expect("genitore verificato");
-                *count -= 1;
-                if *count == 0 {
-                    ready.insert((date(parent), parent.clone()));
-                }
-            }
-        }
-        Ok(Self {
-            snapshots,
-            heads,
-            links,
-            order,
-        })
+        Ok(Catalog::assemble(copies, |bytes| {
+            vault.read_sync_metadata(bytes)
+        })?)
     }
 
-    pub fn decision(&self, local: &str) -> Decision {
-        match self.heads.as_slice() {
-            [head] if head == local => Decision::Current,
-            [head] if self.descends_from(head, local) => Decision::FastForward(head.clone()),
-            _ => Decision::Conflict,
-        }
-    }
-    fn descends_from(&self, head: &str, ancestor: &str) -> bool {
-        let mut todo = vec![head.to_string()];
-        let mut seen = BTreeSet::new();
-        while let Some(id) = todo.pop() {
-            if id == ancestor {
-                return true;
-            }
-            if seen.insert(id.clone())
-                && let Some(parents) = self.links.get(&id)
-            {
-                todo.extend(parents.iter().cloned());
-            }
-        }
-        false
-    }
-    pub fn prepare_retention(&mut self, vault: &mut Vault) -> Result<SaveOutcome> {
+    fn prepare_retention(&mut self, vault: &mut Vault) -> Result<SaveOutcome> {
         if self.heads.len() != 1
             || self.links.len() <= self.snapshots.len().min(history::RETAINED_VERSIONS)
         {
@@ -292,7 +192,7 @@ impl Catalog {
         Ok(outcome)
     }
 
-    pub fn publication(&self, vault: &Vault) -> Result<Publication> {
+    fn publication(&self, vault: &Vault) -> Result<Publication> {
         // Unresolved branches are all retained until the user chooses a state.
         if self.heads.len() != 1 {
             return Ok(Publication {
@@ -358,38 +258,10 @@ impl Catalog {
         })
     }
 
-    pub fn retained(&mut self, publication: &Publication) {
+    fn retained(&mut self, publication: &Publication) {
         self.snapshots
             .retain(|id, _| !publication.obsolete.contains(id));
     }
-
-    pub fn copies(&self) -> Vec<(String, Vec<u8>)> {
-        self.snapshots
-            .values()
-            .map(|s| (s.id.clone(), s.bytes.clone()))
-            .collect()
-    }
-}
-
-fn merge_link(
-    links: &mut BTreeMap<String, Vec<String>>,
-    id: &str,
-    parents: &[String],
-) -> Result<()> {
-    let mut parents = parents.to_vec();
-    parents.sort();
-    parents.dedup();
-    if let Some(previous) = links.get(id) {
-        if *previous != parents {
-            return Err(error("collegamenti autenticati in contraddizione"));
-        }
-    } else {
-        if links.len() >= history::MAX_LINEAGE + history::MAX_VERSIONS {
-            return Err(error("troppi collegamenti nello storico"));
-        }
-        links.insert(id.to_string(), parents);
-    }
-    Ok(())
 }
 
 pub struct Publication {
@@ -510,36 +382,10 @@ fn reconcile_steps(
     })
 }
 
-/// Entries that differ between the local vault and another version, by name.
-#[derive(Debug, Default, PartialEq, Eq)]
-pub struct VersionDiff {
-    /// Only in the other version.
-    pub added: Vec<String>,
-    /// Only in the local vault.
-    pub removed: Vec<String>,
-    pub changed: Vec<String>,
-}
-
-pub fn compare(local: &[Credential], other: &[Credential]) -> VersionDiff {
-    let mut diff = VersionDiff::default();
-    for entry in other {
-        match local.iter().find(|item| item.id == entry.id) {
-            None => diff.added.push(entry.description.clone()),
-            Some(item) if !item.same_content(entry) => diff.changed.push(entry.description.clone()),
-            Some(_) => {}
-        }
-    }
-    diff.removed = local
-        .iter()
-        .filter(|item| !other.iter().any(|entry| entry.id == item.id))
-        .map(|item| item.description.clone())
-        .collect();
-    diff
-}
-
 /// Authenticates downloaded copies with both factors, before anything is written.
 pub fn inspect_recovery(
     vault_path: &Path,
+    cache: &Path,
     copies: Vec<(String, Vec<u8>)>,
     password: &str,
     keyfile: &KeyFile,
@@ -548,7 +394,15 @@ pub fn inspect_recovery(
         .first()
         .ok_or_else(|| error("nessuna copia S3 disponibile"))?;
     let seed = Vault::from_encrypted(vault_path, first.1.clone(), password, keyfile)?;
-    Catalog::build(&seed, vault_path, copies)
+    let catalog = Catalog::build(&seed, vault_path, copies.clone()).inspect_err(|_| {
+        let _ = evict_unauthentic(cache, &seed);
+    })?;
+    // Every copy is authenticated now: keep them, so a retry or the first
+    // sync does not download them again.
+    for (id, bytes) in &copies {
+        let _ = history::remember(cache, id, bytes);
+    }
+    Ok(catalog)
 }
 
 /// Creates the local vault from the chosen current version.

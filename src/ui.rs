@@ -97,6 +97,7 @@ fn build_with_path(
     let menu = gio::Menu::new();
     menu.append(Some("Importa da CSV…"), Some("win.import"));
     menu.append(Some("Esporta in CSV…"), Some("win.export"));
+    menu.append(Some("Configura il telefono…"), Some("win.phone-key"));
     let menu_button = gtk4::MenuButton::new();
     menu_button.set_icon_name("open-menu-symbolic");
     menu_button.set_tooltip_text(Some("Importa ed esporta"));
@@ -241,6 +242,7 @@ fn build_with_path(
     for (name, action) in [
         ("import", transfer::choose_import as fn(&SharedState)),
         ("export", transfer::confirm_export),
+        ("phone-key", phone::confirm),
     ] {
         let entry = gio::SimpleAction::new(name, None);
         entry.connect_activate(clone!(
@@ -1180,7 +1182,10 @@ fn show_restore(state: &SharedState, password: &PasswordEntry) {
                                 show_vault(&state);
                                 show_save_warning(&state, outcome);
                             }
-                            Err(failure) => error.set_text(&failure),
+                            Err(failure) => {
+                                password.set_text("");
+                                error.set_text(&failure);
+                            }
                         }
                     }
                 ),
@@ -1507,6 +1512,7 @@ mod clipboard;
 mod cloud;
 mod details;
 mod keyfiles;
+mod phone;
 #[cfg(test)]
 mod tests;
 mod transfer;

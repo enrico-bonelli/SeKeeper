@@ -408,6 +408,20 @@ fn unlock_existing_vault_idle_lock_editor_cleanup_and_backup_restore() {
             .len(),
         1
     );
+    // The key file goes to the phone as a QR code, which never outlives a lock.
+    phone::transfer(&state, None, None);
+    let qr = state.dialogs.borrow().last().unwrap().upgrade().unwrap();
+    assert!(qr.is_visible());
+    assert!(
+        widgets(qr.upcast_ref())
+            .into_iter()
+            .any(|widget| widget.is::<gtk4::DrawingArea>())
+    );
+    lock_vault(&state);
+    assert!(!qr.is_visible());
+    passwords(state.auth.upcast_ref())[0].set_text("public fixture master password");
+    unlock(&state, "Sblocca");
+
     state.window.close();
 
     // A later start already knows where the key file is.

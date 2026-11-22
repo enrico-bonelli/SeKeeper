@@ -1,18 +1,17 @@
 mod helpers;
 mod history;
 mod keyfile;
-mod model;
 mod preferences;
 mod s3;
 mod security;
 mod storage;
 mod sync;
-mod transfer;
 mod ui;
 mod vault;
 
 use gtk4::Application;
 use gtk4::prelude::*;
+use sekeeper_core::{model, transfer};
 
 const APP_ID: &str = "io.github.sekeeper.Sekeeper";
 

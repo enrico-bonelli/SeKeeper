@@ -26,6 +26,13 @@ impl Drop for Workdir {
         let _ = std::fs::remove_dir_all(&self.0);
     }
 }
+/// Caches every download, as the code before authenticated caching did:
+/// tests that only exercise the catalog use it, and it recreates the
+/// poisoned caches that older versions could leave behind.
+pub(super) fn trust(_: &str, _: &[u8]) -> bool {
+    true
+}
+
 pub(super) fn durable(outcome: SaveOutcome) {
     assert!(matches!(outcome, SaveOutcome::Durable));
 }
@@ -66,7 +73,7 @@ pub(super) fn seed(work: &Workdir) -> (Vault, Vault) {
 pub(super) struct MemoryS3 {
     pub(super) objects: BTreeMap<String, Vec<u8>>,
     fail: bool,
-    reads: usize,
+    pub(super) reads: usize,
     pub(super) fail_put: bool,
     pub(super) delete_budget: Option<usize>,
     pub(super) corrupt_get: Option<String>,
@@ -132,7 +139,7 @@ impl RemoteStore for MemoryS3 {
     }
 }
 pub(super) fn send(vault: &Vault, path: &Path, remote: &mut MemoryS3, cache: &Path) -> Catalog {
-    let downloaded = download(remote, cache).unwrap();
+    let downloaded = download(remote, cache, &trust).unwrap();
     let catalog = Catalog::build(vault, path, downloaded).unwrap();
     publish(remote, cache, &catalog.copies()).unwrap();
     catalog
@@ -166,7 +173,7 @@ fn two_devices_fast_forward_without_timestamps_and_new_pc_recovers() {
         b.data.credentials[0].updated_at,
         a.data.credentials[0].updated_at
     );
-    let remote_copies = download(&mut remote, &work.0.join("cache-c")).unwrap();
+    let remote_copies = download(&mut remote, &work.0.join("cache-c"), &trust).unwrap();
     let other_key_path = work.0.join("other.key");
     durable(KeyFile::generate(&other_key_path).unwrap());
     let other_key = KeyFile::read(&other_key_path).unwrap();
@@ -247,7 +254,7 @@ fn outage_keeps_local_passwords_and_all_offline_ancestors_for_retry() {
         add(&mut a, name);
     }
     let bytes = a.encrypted().to_vec();
-    assert!(download(&mut remote, &cache).is_err());
+    assert!(download(&mut remote, &cache, &trust).is_err());
     assert_eq!(bytes, std::fs::read(work.vault("a")).unwrap());
     assert_eq!(
         history::load(&history::directory(&work.vault("a")))
@@ -304,9 +311,9 @@ fn remote_cache_is_incremental_and_retries_do_not_replace_existing_objects() {
     add(&mut a, "uno");
     send(&a, &work.vault("a"), &mut remote, &cache);
     let other_cache = work.0.join("other-cache");
-    let initial = download(&mut remote, &other_cache).unwrap();
+    let initial = download(&mut remote, &other_cache, &trust).unwrap();
     let reads = remote.reads;
-    let again = download(&mut remote, &other_cache).unwrap();
+    let again = download(&mut remote, &other_cache, &trust).unwrap();
     assert_eq!(reads, remote.reads);
     assert_eq!(initial.len(), again.len());
     let before = remote.objects.clone();

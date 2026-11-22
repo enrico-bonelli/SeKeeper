@@ -1,4 +1,5 @@
 use super::*;
+use sekeeper_core::keyfile::FILE_LEN;
 use std::fs;
 use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
 

@@ -35,6 +35,22 @@ impl State {
         })
     }
 
+    /// The verified content of the selected file, read from its medium now.
+    pub fn load_file(&self) -> io::Result<Zeroizing<[u8; sekeeper_core::keyfile::FILE_LEN]>> {
+        let path = self.path.borrow();
+        let path = path.as_ref().ok_or_else(|| {
+            io::Error::other(
+                "Seleziona prima il file chiave del vault: collega il supporto che lo contiene.",
+            )
+        })?;
+        KeyFile::read_file(path).map_err(|error| {
+            io::Error::new(
+                error.kind(),
+                format!("Impossibile leggere il file chiave: collega il supporto che lo contiene. {error}"),
+            )
+        })
+    }
+
     pub fn select(&self, path: PathBuf) {
         *self.path.borrow_mut() = Some(path);
         self.labels.borrow_mut().retain(|weak| {
