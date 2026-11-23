@@ -13,7 +13,10 @@ fn config() -> Config {
 fn retry_while_script_is_busy<T>(mut request: impl FnMut() -> Result<T>) -> Result<T> {
     for _ in 0..100 {
         match request() {
-            Err(CloudError::Message(message)) if message.starts_with("curl non disponibile") => {
+            Err(CloudError::Message(message))
+                if message.starts_with("curl non disponibile")
+                    || message.starts_with("curl unavailable") =>
+            {
                 std::thread::sleep(Duration::from_millis(10));
             }
             result => return result,
@@ -334,6 +337,8 @@ fn an_endless_answer_is_cut_at_one_copy_and_curl_is_stopped() {
     let started = Instant::now();
     let result =
         retry_while_script_is_busy(|| client.request_with(&program, "sekeeper/test.sek", "", None));
-    assert!(matches!(result, Err(e) if e.to_string().contains("troppo grande")));
+    assert!(
+        matches!(result, Err(e) if e.to_string().contains("troppo grande") || e.to_string().contains("too large"))
+    );
     assert!(started.elapsed() < Duration::from_secs(10));
 }

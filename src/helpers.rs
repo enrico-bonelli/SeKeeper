@@ -1,4 +1,5 @@
 use crate::security;
+use sekeeper_core::i18n::tr;
 use std::ffi::CString;
 use std::fs::File;
 use std::io::{self, Read, Seek, Write};
@@ -36,7 +37,10 @@ impl DerefMut for TrustedCommand {
 fn reject() -> io::Error {
     io::Error::new(
         io::ErrorKind::PermissionDenied,
-        "eseguibile di sistema non sicuro: richiesto un binario ELF del proprietario di /, senza link, permessi di scrittura per altri o privilegi speciali",
+        tr(
+            "unsafe system executable: requires an ELF binary owned by the owner of /, without links, write permissions for others, or special privileges",
+            "eseguibile di sistema non sicuro: richiesto un binario ELF del proprietario di /, senza link, permessi di scrittura per altri o privilegi speciali",
+        ),
     )
 }
 

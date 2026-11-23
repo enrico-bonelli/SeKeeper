@@ -1,422 +1,400 @@
 # Sekeeper
 
-<img src="data/icons/hicolor/scalable/apps/io.github.sekeeper.Sekeeper.svg" width="104" height="104" align="right" alt="Icona di Sekeeper">
+> **[Leggi in italiano](README.it.md)**
 
-**Password manager desktop per Linux con vault cifrato e sincronizzazione
-AWS S3 opzionale.**
+<img src="data/icons/hicolor/scalable/apps/io.github.sekeeper.Sekeeper.svg" width="104" height="104" align="right" alt="Sekeeper icon">
 
-Sekeeper è una piccola applicazione desktop scritta in Rust con interfaccia GTK4.
-È pensata per custodire le credenziali personali in un archivio dedicato,
-protetto da **password principale e file chiave**, con un uso quotidiano semplice:
-apri il vault, cerca un account, consulta o aggiorna i suoi dati e blocca
-l'applicazione quando hai finito.
+**Desktop password manager for Linux with an encrypted vault and optional AWS S3
+synchronization.**
 
-Il vault rimane sul tuo computer e funziona anche senza connessione. Non serve
-un account Sekeeper né un server dedicato. L'integrazione opzionale con un tuo
-bucket AWS S3 aggiunge copie cifrate versionate, sincronizzazione tra PC e
-recupero su una nuova installazione. La configurazione cloud resta sotto il tuo
-controllo.
+Sekeeper is a lightweight desktop application written in Rust with a GTK4 interface.
+It is designed to keep personal credentials in a dedicated store protected by a
+**master password and a key file**, with simple day-to-day ergonomics: open the
+vault, search for an account, view or update its details, and lock the application
+when you are done.
 
-## Cosa puoi fare
+The vault stays on your computer and works offline. No Sekeeper account or dedicated
+server is required. Optional integration with your own AWS S3 bucket adds versioned
+encrypted copies, multi-PC synchronization, and recovery on a new installation. Cloud
+configuration remains entirely under your control. The interface automatically uses
+**Italian** when an Italian locale is active in the environment (`LC_ALL`,
+`LC_MESSAGES`, `LANGUAGE`, `LANG`) and falls back to **English** otherwise.
 
-- **Conservare le credenziali** con descrizione, username, password, indirizzo e note.
-- **Cercare per descrizione, username o indirizzo**, anche in modo parziale e senza
-  distinzione tra maiuscole e minuscole, con le scorciatoie **Ctrl+F** ed **Esc**.
-- **Copiare username e password senza mostrarli**: gli appunti si svuotano da soli
-  dopo 30 secondi e al blocco del vault.
-- **Generare password casuali** direttamente nell'editor.
-- **Importare ed esportare in CSV**, anche da e verso altri password manager.
-- **Vedere quando una voce è stata creata e modificata**, nel dettaglio e nell'editor.
-- **Proteggere l'accesso con due elementi indipendenti**: la password che ricordi
-  e un file chiave casuale che custodisci separatamente.
-- **Recuperare gli stati precedenti** tramite fino a dieci backup locali cifrati,
-  ciascuno con la sua data.
-- **Usare lo stesso vault su più PC Linux**, con sincronizzazione S3 opzionale,
-  lavoro senza rete e scelta esplicita in caso di conflitti.
-- **Bloccare il vault manualmente o automaticamente**, dopo cinque minuti di
-  inattività; il tema chiaro/scuro segue la preferenza del desktop.
+## What you can do
 
-## Da dove iniziare
+- **Store credentials** with description, username, password, address, and notes.
+- **Search by description, username, or address**, partially and case-insensitively,
+  with **Ctrl+F** and **Esc** shortcuts.
+- **Copy usernames and passwords without revealing them**: the clipboard clears
+  automatically after 30 seconds and when the vault locks.
+- **Generate random passwords** directly inside the editor.
+- **Import and export CSV**, including to and from other password managers.
+- **See when each entry was created and last modified**, in the details pane and editor.
+- **Protect access with two independent factors**: the master password you remember
+  and a random key file you store separately.
+- **Recover previous states** through up to ten encrypted local backups, each with its
+  timestamp.
+- **Use the same vault across multiple Linux PCs**, with optional S3 sync, offline
+  editing, and explicit conflict resolution.
+- **Lock the vault manually or automatically** after five minutes of inactivity;
+  light/dark theme follows your desktop preference.
 
-- [Requisiti e avvio](#requisiti-e-avvio)
-- [Creare il primo vault](#creare-il-primo-vault)
-- [Uso quotidiano](#uso-quotidiano)
-- [Importare ed esportare](#importare-ed-esportare)
-- [Custodire il file chiave](#custodire-il-file-chiave)
-- [Backup locali e recupero](#backup-locali-e-recupero)
-- [Sincronizzazione AWS S3](#sincronizzazione-aws-s3-opzionale)
-- [Sicurezza e formato dei dati](#sicurezza-e-formato-dei-dati)
-- [Limiti attuali](#limiti-attuali)
-- [Verifiche per lo sviluppo](#verifiche-per-lo-sviluppo)
+## Contents
 
-## Requisiti e avvio
+- [Requirements and building](#requirements-and-building)
+- [Creating your first vault](#creating-your-first-vault)
+- [Daily use](#daily-use)
+- [Importing and exporting](#importing-and-exporting)
+- [Safeguarding the key file](#safeguarding-the-key-file)
+- [Local backups and recovery](#local-backups-and-recovery)
+- [AWS S3 synchronization (optional)](#aws-s3-synchronization-optional)
+- [Security and data format](#security-and-data-format)
+- [Current limitations](#current-limitations)
+- [Development checks](#development-checks)
 
-### Disposizione dei sorgenti
+## Requirements and building
 
-Sekeeper è composto da due progetti, che devono stare **nella stessa cartella**:
+### Source layout
+
+Sekeeper consists of two projects that must sit **in the same parent directory**:
 
 ```text
 src/
-├── sekeeper/        questa applicazione desktop
-└── sekeeper-core/   libreria condivisa con l'app Android
+├── sekeeper/        this desktop application
+└── sekeeper-core/   shared library used by desktop and Android
 ```
 
-[`sekeeper-core`](../sekeeper-core) contiene il formato del vault (Argon2id,
-AES-256-GCM e file chiave), la ricostruzione della cronologia delle versioni,
-il modello delle credenziali, l'importazione ed esportazione CSV e il QR code per
-il telefono. Non è pubblicata su crates.io: `Cargo.toml` la usa come dipendenza
-locale, con il percorso `../sekeeper-core`, e senza quella cartella la
-compilazione si ferma subito con un errore sul percorso mancante. Usa sempre le
-due copie alla stessa versione, perché formato e cronologia devono coincidere su
-tutti i dispositivi.
+[`sekeeper-core`](../sekeeper-core) contains the vault format (Argon2id, AES-256-GCM,
+and key file), revision history reconstruction, credential model, CSV import/export,
+phone setup QR payload, and EN/IT localization. It is not published on crates.io:
+`Cargo.toml` references it via a local path dependency (`../sekeeper-core`), so builds
+fail immediately if that directory is missing. Always keep both repositories on the
+same version so vault format and history match across devices.
 
-### Installazione su Arch Linux
+### Installing on Arch Linux
 
-La ricetta locale si trova in [`packaging/arch/PKGBUILD`](packaging/arch/PKGBUILD).
-Da una copia completa del progetto, con `sekeeper-core` nella cartella accanto
-(vedi [Disposizione dei sorgenti](#disposizione-dei-sorgenti)):
+The local package recipe is in [`packaging/arch/PKGBUILD`](packaging/arch/PKGBUILD).
+From a complete checkout with `sekeeper-core` in the sibling directory (see
+[Source layout](#source-layout)):
 
 ```sh
 cd packaging/arch
 makepkg -si
 ```
 
-Esegui `makepkg` come utente normale. Il comando installa le dipendenze necessarie,
-compila l'applicazione, esegue i test ordinari e propone l'installazione tramite
-pacman. La ricetta copia nel pacchetto sorgente sia questo progetto sia
-`../sekeeper-core`, quindi le modifiche a entrambi entrano nel pacchetto. Servono
-gli strumenti di `base-devel` e una toolchain Rust; `rustup` è
-utilizzabile se ha una toolchain predefinita compatibile. Al primo build è
-necessaria la rete per scaricare le dipendenze Cargo.
+Run `makepkg` as a regular user. It installs build dependencies, compiles the
+application, runs the standard test suite, and prompts to install via `pacman`. The
+recipe packages both this project and `../sekeeper-core`, so local changes to either
+are included. You need `base-devel` and a Rust toolchain (`rustup` works if its
+default toolchain is compatible). Network access is needed on the first build to
+fetch Cargo dependencies.
 
-Il pacchetto installa `sekeeper` in `/usr/bin`, la voce **Sekeeper** nel menu
-applicazioni e l'icona nel tema `hicolor`, oltre a README e licenza. L'icona è
-incorporata anche nell'eseguibile per l'avvio dalla cartella di sviluppo.
-I dati personali in `~/.config/sekeeper/` e il file chiave non fanno parte del
-pacchetto. La ricetta è per Arch Linux x86_64 e usa i sorgenti della copia locale;
-non è una pubblicazione AUR e non richiede un URL GitHub.
+The package installs `sekeeper` in `/usr/bin`, the **Sekeeper** desktop entry, the
+icon in the `hicolor` theme, plus README and license. The icon is also embedded in
+the binary for running from a development tree. Personal data in
+`~/.config/sekeeper/` and your key file are never part of the package. The recipe
+targets Arch Linux x86_64 using local sources; it is not an AUR package and does not
+require a GitHub URL.
 
-Per creare soltanto il pacchetto usa `makepkg -s`, senza `-i`. Potrai installare
-il file ottenuto con:
+To build the package without installing, run `makepkg -s` and install later with:
 
 ```sh
-sudo pacman -U ./sekeeper-0.3.1-1-x86_64.pkg.tar.zst
+sudo pacman -U ./sekeeper-0.3.1-2-x86_64.pkg.tar.zst
 ```
 
-Le dipendenze opzionali `curl` e `libsecret`, con un portachiavi Secret Service
-attivo, servono per l'integrazione S3; non sono necessarie per l'uso locale.
+The optional dependencies `curl` and `libsecret` (with an active Secret Service
+keyring) are needed for S3 sync; they are not required for local-only use.
 
-### Compilazione manuale
+### Manual compilation
 
-Per compilare l'applicazione servono:
+To build from source you need:
 
-- **Linux** e **Rust 1.89 o successivo** (edizione 2024);
-- la libreria [`sekeeper-core`](#disposizione-dei-sorgenti) nella cartella
-  `../sekeeper-core`;
-- le librerie di sviluppo **GTK4 4.6 o successive**, con `pkg-config` e
-  `glib-compile-resources` per incorporare l'icona.
+- **Linux** and **Rust 1.89 or later** (edition 2024);
+- the [`sekeeper-core`](#source-layout) library in `../sekeeper-core`;
+- **GTK4 4.6 or later** development libraries, plus `pkg-config` and
+  `glib-compile-resources` to embed the icon.
 
-Su Arch Linux bastano:
+On Arch Linux:
 
 ```sh
 sudo pacman -S --needed base-devel rust gtk4 glib2 pkgconf
 ```
 
-Su Debian/Ubuntu i pacchetti corrispondenti sono `build-essential`,
-`libgtk-4-dev` e `pkg-config`, con Rust installato tramite `rustup` se la
-versione della distribuzione è più vecchia della 1.89. Per l'uso locale non
-occorrono servizi cloud.
+On Debian/Ubuntu the equivalent packages are `build-essential`, `libgtk-4-dev`, and
+`pkg-config` (install Rust via `rustup` if the distribution package is older than
+1.89). No cloud services are required for local use.
 
-Per l'opzione AWS S3 servono anche `curl` 7.75 o successivo con supporto AWS
-SigV4 e `secret-tool` (pacchetto `libsecret` su Arch Linux e `libsecret-tools`
-su Debian/Ubuntu), con un portachiavi Secret Service attivo nella sessione.
-Si usano i binari ELF installati in `/usr/bin/curl` e `/usr/bin/secret-tool`:
-devono appartenere al proprietario dell'albero di sistema, senza link simbolici o
-permessi di scrittura per gruppo/altri. Serve `/proc` montato, come nei normali
-desktop Linux.
+For optional AWS S3 sync you also need `curl` 7.75 or later with AWS SigV4 support
+and `secret-tool` (`libsecret` on Arch Linux, `libsecret-tools` on Debian/Ubuntu)
+with an active Secret Service keyring in your session. Sekeeper invokes the ELF
+binaries at `/usr/bin/curl` and `/usr/bin/secret-tool`: they must belong to the
+system tree owner, with no symlinks and no group/other write permissions. `/proc`
+must be mounted, as on standard Linux desktops.
 
-Compilazione e avvio, dalla cartella che contiene i due progetti:
+Build and run from the parent directory containing both projects:
 
 ```sh
-ls sekeeper-core/Cargo.toml   # la libreria condivisa deve esserci
+ls sekeeper-core/Cargo.toml   # shared library must exist
 cd sekeeper
 cargo build --locked --release
 ./target/release/sekeeper
 ```
 
-`--locked` usa esattamente le versioni delle dipendenze registrate in
-`Cargo.lock`, compresa quella di `sekeeper-core`. Al primo build serve la rete per
-scaricare le dipendenze Cargo; i build successivi funzionano anche offline.
-Cargo ricompila da solo `sekeeper-core` quando i suoi sorgenti cambiano: non serve
-compilarla a parte. La build di release attiva LTO, quindi richiede qualche minuto.
+`--locked` uses the exact dependency versions pinned in `Cargo.lock`, including
+`sekeeper-core`. Network access is required on the first build; subsequent builds
+work offline. Cargo recompiles `sekeeper-core` automatically whenever its sources
+change. Release builds enable LTO and take a few minutes.
 
-Per una versione di sviluppo, più rapida da compilare, usa `cargo run --locked`.
-Anche in sviluppo Argon2id viene compilato ottimizzato, così lo sblocco non
-diventa lento. Dopo aver compilato una nuova
-versione, chiudi l'istanza eventualmente aperta e riavvia l'eseguibile: una seconda
-invocazione può limitarsi a portare in primo piano il processo già in esecuzione.
+For faster development builds, use `cargo run --locked`. Even in debug builds,
+Argon2id is compiled with optimizations so unlocking stays responsive. After
+rebuilding, close any running instance before launching the new binary, as a second
+invocation may simply focus the existing process.
 
-### Aspetto e integrazione con il desktop
+### Appearance and desktop integration
 
-Il tema chiaro/scuro segue la preferenza del desktop tramite il portale XDG,
-anche quando cambia durante l'esecuzione. All'avvio vengono lette anche le
-impostazioni GTK4 e, su KDE, la palette delle finestre come alternativa quando
-il portale non è disponibile. Un eventuale `GTK_THEME` esplicito viene rispettato.
-I selettori del file chiave sono finestre GTK interne e non richiedono il portale
-di selezione file del desktop.
+Light/dark mode follows the desktop preference through the XDG portal, including live
+changes at runtime. On startup Sekeeper also checks GTK4 settings and, on KDE, the
+window palette as a fallback when the portal is unavailable. An explicit `GTK_THEME`
+is respected. Key file choosers are internal GTK dialogs and do not require the
+desktop file chooser portal.
 
-## Creare il primo vault
+## Creating your first vault
 
-1. Avvia Sekeeper e scegli una **password principale** unica di almeno 15
-   caratteri, preferibilmente una passphrase di 5–6 parole scelte casualmente.
-2. Premi **Genera file chiave…** e salvalo fuori dalla cartella del vault, per
-   esempio su una chiavetta USB cifrata già montata. Se ne possiedi già uno
-   generato da Sekeeper, usa **Scegli file chiave…**.
-3. Conserva una **copia identica del file chiave** in una seconda posizione
-   separata, da usare per il recupero.
-4. Conferma la password e premi **Crea vault**.
-5. Premi **Aggiungi** per salvare la prima credenziale. Descrizione, username e
-   password sono obbligatori; indirizzo e note sono facoltativi.
+1. Launch Sekeeper and choose a unique **master password** of at least 15 characters,
+   preferably a passphrase of 5–6 randomly chosen words.
+2. Click **Generate key file…** and save it outside the vault directory — for example
+   on an already mounted encrypted USB drive. If you already have a key file
+   generated by Sekeeper, use **Choose key file…**.
+3. Keep an **identical recovery copy of the key file** in a second, separate location.
+4. Confirm the password and click **Create vault**.
+5. Click **Add** to store your first credential. Description, username, and password
+   are required; address and notes are optional.
 
-**Password principale e file chiave sono entrambi necessari.** Il file non è un
-codice temporaneo: va conservato e riutilizzato, senza rigenerarlo a ogni avvio.
-Se dimentichi la password o perdi tutte le copie del file chiave, non esiste una
-procedura di recupero dei dati.
+**Both master password and key file are required.** The key file is not a one-time
+code: keep and reuse it rather than regenerating it on every launch. If you forget
+the password or lose all copies of the key file, there is no recovery mechanism.
 
-Se S3 è già configurato e vuoi iniziare con un vault vuoto, scegli **Crea un nuovo
-vault vuoto** dalla schermata di recupero. Se il vault esiste già su un altro PC,
-segui invece la procedura [per un PC nuovo](#recuperare-il-vault-su-un-pc-nuovo).
+If S3 is already configured and you want to start with an empty vault, choose
+**Create a new empty vault** from the recovery screen. If the vault already exists on
+another PC, follow [Recovering the vault on a new PC](#recovering-the-vault-on-a-new-pc).
 
-## Uso quotidiano
+## Daily use
 
-All'avvio inserisci la password principale, seleziona il file chiave e premi
-**Sblocca**. Durante la sessione il percorso del file viene ricordato. Con
-**Ricorda il percorso su questo PC** resta disponibile anche ai riavvii successivi;
-altrimenti va selezionato di nuovo. Puoi scollegare la USB dopo lo sblocco e
-continuare a lavorare fino al blocco successivo.
+At launch, enter your master password, select the key file, and click **Unlock**. The
+key file path is remembered during the current session. With **Remember path on this
+PC** enabled, the path is remembered across restarts as well; otherwise you select it
+again each time. You may unplug the USB drive after unlocking and continue working
+until the next lock.
 
-L'elenco a sinistra è in ordine alfabetico. Selezionando una voce, il pannello di
-destra mostra i suoi dati con la password nascosta: l'icona a forma di occhio la
-rivela e l'icona di copia la mette negli appunti senza mostrarla. Usa **Aggiungi**,
-**Modifica** ed **Elimina** per gestire le voci; un doppio clic su una riga apre
-l'editor. Il pulsante **Blocca** chiude la sessione e richiede di nuovo entrambi i
-fattori per accedere.
+The list on the left is sorted alphabetically. Selecting an entry shows its details
+on the right with the password hidden: the eye icon reveals it and the copy icon
+places it on the clipboard without displaying it. Use **Add**, **Edit**, and
+**Delete** to manage entries; double-clicking a row opens the editor. **Lock** closes
+the session and requires both factors again to unlock.
 
-### Appunti
+### Clipboard
 
-Gli appunti vengono svuotati dopo 30 secondi e al blocco, a meno che nel frattempo
-tu non abbia copiato altro. Il contenuto è contrassegnato con
-`x-kde-passwordManagerHint`, che chiede a Klipper di non conservarlo nella
-cronologia; altri gestori di appunti possono ignorare questa indicazione.
+The clipboard is cleared automatically after 30 seconds and on lock, unless you have
+copied something else in the meantime. Copied entries carry the
+`x-kde-passwordManagerHint` marker asking Klipper not to store them in clipboard
+history; other clipboard managers may ignore this hint.
 
-### Generare una password
+### Generating a password
 
-Nell'editor, **Genera** sostituisce il campo password con una password casuale della
-lunghezza scelta (20 caratteri se non la cambi, da 8 a 64). Contiene sempre
-minuscole, maiuscole, cifre e simboli, ed evita i caratteri facili da confondere
-come `I`, `l`, `1`, `O` e `0`.
+Inside the editor, **Generate** fills the password field with a random password of
+the chosen length (20 characters by default, from 8 to 64). It always includes
+lowercase, uppercase, digits, and symbols while avoiding visually ambiguous
+characters such as `I`, `l`, `1`, `O`, and `0`.
 
-### Ricerca e date
+### Search and timestamps
 
-La barra di ricerca filtra le voci per descrizione, username o indirizzo, anche con
-parti del testo e senza distinguere maiuscole e minuscole. Password e note non
-vengono cercate. **Ctrl+F** porta il cursore alla ricerca; **Esc** la cancella. Il contatore indica quanti risultati sono
-visibili rispetto al totale. Modifica ed eliminazione agiscono sulla voce
-selezionata anche quando l'elenco è filtrato.
+The search bar filters entries by description, username, or address (partial,
+case-insensitive matching). Passwords and notes are never searched. **Ctrl+F**
+focuses search; **Esc** clears it. The counter displays matching entries versus total
+entries. Editing and deleting apply to the selected entry even while filtered.
 
-La data di creazione e l'ultima modifica compaiono nel pannello di dettaglio e
-nella finestra di modifica, nell'ora locale del PC. Sono conservate all'interno del vault cifrato
-e nelle sue copie, comprese quelle su S3. La creazione resta invariata; l'ultima
-modifica cambia solo quando vengono cambiati i dati della voce. Salvare senza
-modifiche non crea una nuova versione.
+Creation and last-modified timestamps appear in the details pane and editor in local
+time. They are stored inside the encrypted vault and its copies, including S3 copies.
+Creation time never changes; last-modified updates only when entry data changes.
+Saving without changes does not create a new revision.
 
-Per eventuali date non registrate viene mostrato **Non disponibile**. Una
-successiva modifica registra la data di modifica senza inventare quella di
-creazione. Tutti i PC devono usare la versione con supporto al file chiave.
+Missing timestamps display **Unavailable**. A subsequent edit records the
+modification timestamp without inventing a creation date. All PCs must run a version
+with key file support.
 
-### Blocco automatico
+### Auto-lock
 
-Il vault si blocca dopo cinque minuti senza attività nell'applicazione, anche con
-una finestra di modifica aperta. Il blocco chiude le finestre di modifica e scarta
-le modifiche non salvate. Quando i servizi del desktop lo consentono, Sekeeper
-si blocca anche al blocco o alla disattivazione della sessione e prima della
-sospensione, tramite i segnali D-Bus di ScreenSaver e systemd-logind. Il timeout
-rimane operativo anche senza questi servizi.
+The vault locks automatically after five minutes of inactivity inside the app, even
+if an editor dialog is open. Locking closes open editors and discards unsaved
+changes. When supported by desktop services, Sekeeper also locks on session lock,
+session deactivation, and before suspend via ScreenSaver and systemd-logind D-Bus
+signals. The idle timeout works even without those services.
 
-## Importare ed esportare
+## Importing and exporting
 
-Il menu accanto a **S3…** contiene **Importa da CSV…** ed **Esporta in CSV…**.
+The menu next to **S3…** provides **Import from CSV…** and **Export to CSV…**.
 
-**L'esportazione produce un file non cifrato**: chiunque lo legga vede tutte le
-password. Il file viene creato con permessi `0600`, non sovrascrive file esistenti e
-richiede una cartella dell'utente non scrivibile da altri. Conservalo su un supporto
-cifrato e cancellalo appena hai finito.
+**Exporting creates an unencrypted file**: anyone who reads it sees every password.
+The file is created with `0600` permissions, never overwrites existing files, and
+requires a user-owned directory not writable by others. Store it on encrypted media
+and delete it as soon as you finish.
 
-L'importazione riconosce le colonne dal nome, quindi accetta i file di Sekeeper e i
-CSV prodotti da applicazioni come Chrome, Bitwarden e KeePassXC. Servono almeno una
-colonna con la descrizione e una con la password, e il file deve essere in UTF-8.
-Le voci identiche a una già presente vengono saltate.
+Import matches columns by header name (supporting both English and Italian headers),
+so it accepts Sekeeper exports as well as CSVs from applications such as Chrome,
+Bitwarden, and KeePassXC. At least a description column and a password column are
+required, and the file must be UTF-8. Entries identical to an existing one are
+skipped.
 
-Per cambiare password principale o file chiave: esporta, crea un nuovo vault in una
-nuova installazione o dopo aver archiviato quello vecchio, importa e cancella il
-CSV. Le date delle voci vengono mantenute. Con S3 attivo usa un nuovo prefisso,
-perché il nuovo vault è indipendente dalle copie già caricate.
+To change your master password or key file: export to CSV, create a new vault in a
+fresh installation or after archiving the old one, import the CSV, and delete the CSV
+file. Entry timestamps are preserved. When using S3, choose a new prefix because the
+new vault is independent of previously uploaded copies.
 
-## Custodire il file chiave
+## Safeguarding the key file
 
-Il file chiave è un secondo segreto necessario ad aprire il vault. Puoi tenerlo
-su un supporto separato dal computer e dalle copie S3. La generazione tramite
-Sekeeper non sovrascrive file esistenti.
+The key file is a second secret required to open the vault. You can keep it on media
+separate from your computer and from S3 copies. Generating a key file in Sekeeper
+never overwrites an existing file.
 
-Il file contiene un segreto casuale di 256 bit; entrambi i fattori sono necessari
-alla derivazione della chiave di cifratura. Non basta rimuovere un controllo
-nell'interfaccia per aprire il vault senza il file. Non esiste un ripiego alla
-sola password. La funzione usa l'input segreto K previsto da
-[Argon2, RFC 9106](https://www.rfc-editor.org/rfc/rfc9106.html#section-3.1).
+The file holds a random 256-bit secret; both factors are cryptographically required
+to derive the encryption key. Removing a UI check cannot open the vault without the
+file, and there is no password-only fallback. Key derivation uses secret input `K` as
+specified by [Argon2, RFC 9106](https://www.rfc-editor.org/rfc/rfc9106.html#section-3.1).
 
-Per ogni sblocco o recupero, seleziona il file e inserisci la password principale.
-Il percorso viene ricordato durante la sessione dell'applicazione. Attivando
-**Ricorda il percorso su questo PC**, dopo uno sblocco riuscito viene salvato in
-chiaro in `vault.prefs.json`: contiene solo la posizione del file, mai il suo
-contenuto, e chi legge i tuoi file scopre dove lo tieni. Una volta sbloccato puoi scollegare il supporto:
-l'app mantiene soltanto la chiave derivata fino al blocco, permettendo salvataggi
-e sincronizzazione senza rileggere il file chiave.
+For every unlock or recovery, select the key file and enter the master password. The
+path is remembered for the current app session. Enabling **Remember path on this PC**
+saves the path in plaintext in `vault.prefs.json` after a successful unlock: it only
+stores the file location, never its contents, though anyone able to read your files
+learns where you keep it. Once unlocked, you may unplug the drive: the app holds only
+the derived key until lock, allowing saves and synchronization without re-reading the
+key file.
 
-Conserva una **copia identica di recupero** su un altro supporto separato. Puoi
-spostare o rinominare il file senza cambiare il vault; generare un nuovo file con
-lo stesso nome produce invece una chiave diversa e non consente di aprirlo.
-Se dimentichi la password o perdi tutte le copie del file chiave, i dati non sono
-recuperabili. Non è previsto un cambio del file chiave su un vault esistente.
+Keep an **identical recovery copy** on separate media. You can move or rename the key
+file without affecting the vault; generating a new file with the same name produces a
+different key and will not open the vault. If you forget the master password or lose
+all copies of the key file, the data cannot be recovered. Changing the key file on an
+existing vault in place is not supported.
 
-Il contenuto del file non viene caricato su S3 né inserito nel vault, nei backup,
-nella configurazione o nel portachiavi. Puoi custodirne una copia cifrata su un altro
-cloud: prima dell'uso va decifrata in un file locale, con strumenti esterni.
-Il file chiave non viene cifrato da Sekeeper: la cifratura del supporto USB o della
-copia cloud va gestita separatamente. L'applicazione non monta supporti e non
-decifra contenitori USB o file esterni.
+The key file contents are never uploaded to S3 or stored in the vault, backups,
+configuration, or keyring. You may keep an externally encrypted copy in another cloud
+storage service and decrypt it to a local file before use. Sekeeper does not encrypt
+the key file itself, mount drives, or decrypt external containers.
 
-### Configurare il telefono
+### Setting up the phone
 
-Con il vault sbloccato e il supporto del file chiave collegato, il menu accanto a
-**S3…** contiene **Configura il telefono…**. Sekeeper rilegge e verifica il file
-chiave e lo mostra come QR code per l'app
-[Sekeeper per Android](../sekeeper-android), insieme a bucket, regione e prefisso se
-S3 è configurato. Puoi includere le chiavi AWS di questo PC, lette dal portachiavi,
-oppure indicare chiavi dedicate al telefono, che non vengono salvate. Con le chiavi
-del PC, PC e telefono condividono la stessa identità IAM: revocarla li scollega
-entrambi. Chiavi dedicate al telefono, con i soli permessi `s3:ListBucket` e
-`s3:GetObject` finché l'app è in sola lettura, si revocano da sole se il telefono
-va perso. Le chiavi temporanee con session token non sono trasferibili. La finestra si chiude da sola
-dopo 60 secondi o al blocco del vault.
+With the vault unlocked and the key file medium connected, the menu next to **S3…**
+offers **Set up phone…**. Sekeeper re-reads and verifies the key file and displays a
+QR code for [Sekeeper for Android](../sekeeper-android), along with bucket, region,
+and prefix if S3 is configured. You can include this PC's AWS keys (read from the
+keyring) or enter dedicated phone keys (which are not saved on the PC). Reusing the
+PC's keys means PC and phone share one IAM identity: revoking it disconnects both.
+Dedicated phone keys — needing only `s3:ListBucket` and `s3:GetObject` while the
+phone app is read-only — can be revoked independently if the phone is lost. Temporary
+credentials with a session token cannot be transferred. The dialog closes
+automatically after 60 seconds or when the vault locks.
 
-La password principale non fa mai parte del QR code. Il file chiave e le chiavi AWS
-sì: chi fotografa il codice ottiene tutto tranne la password. Mostralo solo dove nessuno può vedere lo schermo. Linux non
-permette all'applicazione di impedire gli screenshot.
+The master password is never part of the QR code. The key file and AWS keys are:
+anyone photographing the code gets everything except the master password. Display it
+only where nobody else can see your screen. Linux does not allow applications to
+block screenshots.
 
-### Supporti e permessi
+### Storage media and permissions
 
-Il file deve appartenere all'utente e avere permessi `0600` o più restrittivi;
-sono rifiutati link simbolici e hard link. Anche i componenti del
-percorso devono rispettare i controlli di proprietà e scrittura. La cartella scelta
-deve già esistere, appartenere all'utente e non essere scrivibile da gruppo/altri;
-i suoi permessi non vengono modificati. Usa un filesystem con permessi Unix, oppure
-impostazioni di montaggio equivalenti. I buffer del segreto vengono azzerati dopo
-la derivazione.
+The key file must belong to your user and have `0600` (or stricter) permissions;
+symlinks and hard links are rejected. Path components must also pass ownership and
+writability checks. The target directory must already exist, belong to your user, and
+not be group/other writable; Sekeeper does not alter directory permissions. Use a
+filesystem supporting Unix permissions or equivalent mount options. Secret buffers
+are zeroized after key derivation.
 
-## Backup locali e recupero
+## Local backups and recovery
 
-I file si trovano in `~/.config/sekeeper/`:
+Files live in `~/.config/sekeeper/`:
 
-| File | Contenuto |
+| File | Contents |
 | --- | --- |
-| `vault` | Vault corrente cifrato |
-| `vault.v3.bak.1` | Stato prima dell'ultimo salvataggio |
-| da `vault.v3.bak.2` a `vault.v3.bak.10` | Fino a nove stati precedenti ulteriori |
-| `vault.v3.before-restore` | File corrente conservato prima dell'ultimo ripristino |
-| `vault.lock` | File usato per coordinare le scritture; non contiene password |
-| `vault.s3.json` | Configurazione S3 locale, senza credenziali AWS |
-| `vault.prefs.json` | Facoltativo: percorso del file chiave, non il suo contenuto |
-| `vault.history-v3/` | Cronologia cifrata delle versioni, scritta solo con S3 attivo |
-| `vault.s3-cache/` | Copie cifrate scaricate, separate per destinazione S3 |
+| `vault` | Current encrypted vault |
+| `vault.v3.bak.1` | State before the last save |
+| `vault.v3.bak.2` through `vault.v3.bak.10` | Up to nine earlier states |
+| `vault.v3.before-restore` | Current file preserved before the last restore |
+| `vault.lock` | Lock file coordinating writes; contains no passwords |
+| `vault.s3.json` | Local S3 configuration, without AWS credentials |
+| `vault.prefs.json` | Optional: path to the key file, never its contents |
+| `vault.history-v3/` | Encrypted revision history, written only when S3 is active |
+| `vault.s3-cache/` | Downloaded encrypted copies, isolated per S3 destination |
 
-Le copie sono cifrate come il vault. Ruotano prima di ogni salvataggio;
-alla sola creazione del vault non ci sono ancora versioni precedenti. Proteggono
-da alcuni errori e cancellazioni, ma sono sullo stesso disco: conserva anche copie
-su un supporto esterno, mantenendo una versione verificata prima di sostituirla.
-Per copiare un insieme coerente di file, blocca o chiudi prima Sekeeper.
+Backups are encrypted identically to the vault and rotate before every save (a newly
+created vault has no previous backups yet). They protect against accidental edits or
+deletions, but live on the same disk: keep external copies as well and verify a copy
+before replacing it. Lock or close Sekeeper before copying files to get a consistent
+snapshot.
 
-La cancellazione di una credenziale la rimuove dal vault corrente, ma non dalle
-copie storiche che la contengono, locali o su S3.
+Deleting a credential removes it from the current vault, not from historical local or
+S3 copies that already contain it.
 
-### Ripristinare una copia locale
+### Restoring a local backup
 
-Per recuperare uno stato precedente:
+To restore a previous state:
 
-1. Blocca il vault, se è aperto.
-2. Premi **Ripristina una copia precedente…** nella schermata di sblocco.
-3. Scegli una copia in base alla data, inserisci la relativa password principale e seleziona il file chiave.
-4. Conferma il ripristino. Le modifiche successive alla copia verranno annullate.
+1. Lock the vault if it is open.
+2. Click **Restore a previous copy…** on the unlock screen.
+3. Pick a backup by timestamp, enter its master password, and select the key file.
+4. Confirm the restore. Changes made after that backup will be undone.
 
-Il ripristino funziona anche se il file `vault` manca o è danneggiato. La copia
-scelta viene autenticata e letta prima di sostituire il file corrente. Una password
-o un file chiave errati, oppure una copia danneggiata, non modificano il vault
-corrente. Se rimangono delle copie di backup, l'applicazione offre il recupero
-anziché creare un vault vuoto.
+Restore works even if `vault` is missing or corrupted. The chosen backup is
+authenticated and read before replacing the current file. A wrong password, wrong key
+file, or damaged backup leaves the current vault untouched. If backup copies exist,
+the app offers recovery instead of creating an empty vault.
 
-Se viene segnalato un errore di conservazione dopo una scrittura, il file contiene
-già le modifiche: Sekeeper mantiene lo stesso stato in memoria e non ripete
-automaticamente l'operazione. La sopravvivenza delle modifiche a uno spegnimento
-improvviso non è però confermata.
+If a durability error is reported after writing, the file already contains the edits:
+Sekeeper keeps the same in-memory state without silently retrying, though survival
+across a sudden power loss is not confirmed.
 
-## Sincronizzazione AWS S3 (opzionale)
+## AWS S3 synchronization (optional)
 
-S3 permette di conservare una copia del vault fuori dal computer e condividere
-lo stesso archivio tra più installazioni di Sekeeper. Ogni salvataggio
-sincronizzato produce una copia cifrata identificata da una versione; il servizio
-non riceve la password principale o il file chiave.
+S3 lets you keep off-device copies of your vault and share the same archive across
+multiple Sekeeper installations. Each synchronized save produces an encrypted copy
+identified by a revision ID; S3 never receives your master password or key file.
 
-### Configurare il primo PC
+### Configuring the first PC
 
-Il pulsante **S3…** apre le impostazioni. La funzione è disattivata fino alla
-configurazione. Inserisci bucket, regione (per esempio `eu-central-1`), prefisso
-(per esempio `sekeeper/personale/`), nome del PC e credenziali IAM dedicate.
-Il file chiave del vault non viene caricato su S3: trasferiscine una copia identica
-sugli altri PC con un mezzo separato.
-Il session token è facoltativo e serve se usi credenziali temporanee; quando queste
-scadono, inserisci le nuove credenziali nelle impostazioni. Lasciando tutti i campi
-delle credenziali vuoti vengono mantenute quelle già salvate.
+**S3…** opens sync settings (disabled until configured). Enter bucket, region (e.g.
+`eu-central-1`), prefix (e.g. `sekeeper/personal/`), PC name, and dedicated IAM
+credentials. The vault key file is never uploaded to S3: transfer an identical copy
+to your other PCs through a separate channel. Session token is optional for temporary
+credentials; when they expire, enter fresh credentials in settings. Leaving all
+credential fields blank preserves the previously saved keys.
 
-Le credenziali AWS vengono conservate esclusivamente nel portachiavi locale tramite
-`secret-tool`, separatamente dalla password principale. Non vengono scritte nel
-JSON di configurazione, nel vault o negli oggetti S3. Se il portachiavi non è
-disponibile, l'app segnala l'errore e non ripiega su file di credenziali in chiaro.
-Quando inserisci nuove credenziali, la voce precedente viene rimossa dal portachiavi
-dopo il salvataggio della nuova configurazione.
-Usa lo stesso bucket e prefisso su tutti i PC. Credenziali dedicate a ciascun
-dispositivo sono preferibili, perché si revocano una alla volta; il telefono può
-anche ricevere quelle del PC (vedi [Configurare il telefono](#configurare-il-telefono)).
-Non usare credenziali amministrative o dell'account root.
+AWS credentials are stored exclusively in your local keyring via `secret-tool`,
+separate from the master password. They are never written to JSON config, the vault,
+or S3 objects. If the keyring is unavailable, Sekeeper reports an error and never
+falls back to plaintext credential files. When replacing credentials, the previous
+keyring item is deleted after saving the new config. Use the same bucket and prefix
+on every PC. Dedicated per-device credentials are recommended so each device can be
+revoked individually; the phone may also receive the PC's keys (see
+[Setting up the phone](#setting-up-the-phone)). Never use root or administrator AWS
+credentials.
 
-### Bucket e permessi IAM
+### Bucket and IAM permissions
 
-Il bucket deve essere privato, con tutte le opzioni Block Public Access attive,
-ACL disabilitate e cifratura SSE-S3. È consigliato abilitare anche S3 Versioning.
-Per iniziare, lascia disattivate le regole di scadenza automatica degli oggetti.
+The bucket must be private with all Block Public Access settings enabled, ACLs
+disabled, and SSE-S3 encryption enabled. Enabling **S3 Versioning** is recommended.
+Start with object lifecycle expiration rules disabled.
 
-Chi ottiene le chiavi del bucket non può leggere né modificare il vault, ma può
-cancellare le copie. Un PC già sincronizzato e il telefono, che conserva l'ultima
-versione aperta, rifiutano un ritorno silenzioso a una versione più vecchia e lo
-segnalano. Un PC nuovo, in recupero, vede invece solo ciò che il bucket contiene.
-Con S3 Versioning le copie cancellate restano recuperabili come versioni non
-correnti; per una protezione più forte valuta MFA Delete o S3 Object Lock in
-modalità governance sul prefisso del vault.
+Anyone who obtains the bucket's write/delete keys cannot read or forge vault data,
+but can delete copies. An already-synced PC — and the phone, which keeps the latest
+opened version — refuses silent rollback to an older revision and alerts you. A brand
+new PC performing recovery, however, can only see what remains in the bucket. With S3
+Versioning enabled, deleted copies remain recoverable as non-current versions; for
+stronger protection consider **MFA Delete** or **S3 Object Lock** in governance mode
+on the vault prefix.
 
-Questa policy IAM è sufficiente per l'integrazione; sostituisci `NOME_BUCKET`.
-Lo statement `s3:DeleteObject` usa il prefisso di esempio `sekeeper/personale/`:
-adattalo al prefisso configurato, mantenendo il suffisso `v3/versions/*`.
-Per chi aggiorna dalla 0.1.0, questo è l'unico nuovo permesso richiesto. Senza di
-esso caricamenti e letture continuano, ma la pulizia viene segnalata in attesa.
-Assegnala all'identità dedicata, senza aggiungere altre policy S3 più ampie:
+This IAM policy is sufficient for desktop sync; replace `BUCKET_NAME`. The
+`s3:DeleteObject` statement uses the example prefix `sekeeper/personal/`: adjust it
+to match your configured prefix while keeping the `v3/versions/*` suffix. Upgrading
+from 0.1.0 only adds this delete permission (without it, uploads and reads still work
+while retention pruning stays pending). Attach it to a dedicated identity with no
+broader S3 policies:
 
 ```json
 {
@@ -425,242 +403,221 @@ Assegnala all'identità dedicata, senza aggiungere altre policy S3 più ampie:
     {
       "Effect": "Allow",
       "Action": "s3:ListBucket",
-      "Resource": "arn:aws:s3:::NOME_BUCKET",
+      "Resource": "arn:aws:s3:::BUCKET_NAME",
       "Condition": { "StringLike": { "s3:prefix": "sekeeper/*" } }
     },
     {
       "Effect": "Allow",
       "Action": "s3:GetObject",
-      "Resource": "arn:aws:s3:::NOME_BUCKET/sekeeper/*"
+      "Resource": "arn:aws:s3:::BUCKET_NAME/sekeeper/*"
     },
     {
       "Effect": "Allow",
       "Action": "s3:PutObject",
-      "Resource": "arn:aws:s3:::NOME_BUCKET/sekeeper/*",
+      "Resource": "arn:aws:s3:::BUCKET_NAME/sekeeper/*",
       "Condition": { "StringEquals": { "s3:if-none-match": "*" } }
     },
     {
       "Effect": "Allow",
       "Action": "s3:DeleteObject",
-      "Resource": "arn:aws:s3:::NOME_BUCKET/sekeeper/personale/v3/versions/*"
+      "Resource": "arn:aws:s3:::BUCKET_NAME/sekeeper/personal/v3/versions/*"
     }
   ]
 }
 ```
 
-### Conservazione delle ultime 30 copie complete
+### Retaining the latest 30 full copies
 
-Da Sekeeper **0.2.0**, ogni sincronizzazione riuscita mantiene al massimo **30
-copie complete** nel prefisso S3, sempre includendo lo stato corrente. Si
-privilegiano le revisioni successive nella cronologia verificata, usando la data
-autenticata per ordinare rami equivalenti. Così un orologio del PC fuori sincrono
-non fa prevalere una vecchia revisione su una sua modifica successiva. La data di
-caricamento sul bucket e l'ordine alfabetico dei nomi degli oggetti non determinano
-lo stato corrente.
+Since Sekeeper **0.2.0**, each successful sync retains at most **30 full copies**
+under the S3 prefix, always including the current state. Later revisions in the
+verified ancestry graph take precedence, using authenticated timestamps to order
+equivalent branches. A skewed PC clock therefore cannot make an older revision
+override a descendant edit, nor do S3 upload times or alphabetical object names
+decide the current head.
 
-Ogni vault conserva un riepilogo cifrato dei collegamenti tra revisioni. Questo
-contiene identificativi e relazioni, senza password o contenuti delle vecchie
-voci: permette di riconoscere un PC rimasto offline anche quando la sua copia
-originaria è stata rimossa da S3. La prima pulizia consolida automaticamente lo
-storico v3 esistente, senza cambiare password o file chiave.
+Each vault carries an encrypted summary of ancestry links (IDs and parent relations
+only, with no old passwords or entry contents), enabling an offline PC to reconnect
+even after its original snapshot has been pruned from S3. The first cleanup
+automatically consolidates existing v3 history without changing passwords or key
+files.
 
-La copia con il riepilogo deve essere caricata e riletta con successo prima di
-cancellare qualsiasi oggetto. Dopo la pulizia S3 vengono rimossi anche i file
-superati nella cache di quel PC e nella sua cronologia di sincronizzazione.
-Restano separati i dieci backup locali di recupero.
+The snapshot carrying the updated lineage summary must be uploaded and read back
+successfully before any older object is deleted. After S3 pruning, superseded files
+in that PC's local cache and sync history are cleaned up as well. The ten local
+recovery backups remain separate.
 
-Con conflitti aperti la pulizia viene sospesa e il numero di copie può superare
-30 fino alla risoluzione. Anche trasferimenti contemporanei, errori di rete o
-permessi mancanti possono rimandare il raggiungimento del limite: le operazioni
-sono ritentate alle sincronizzazioni successive. Il vault locale resta utilizzabile.
+While conflicts are open, pruning pauses and the copy count may exceed 30 until the
+conflict is resolved. Concurrent transfers, network errors, or missing permissions
+simply defer cleanup to future syncs while keeping the local vault usable.
 
-**Aggiorna Sekeeper su tutti i PC prima di attivare la sincronizzazione della
-versione 0.2.0.** Le vecchie applicazioni non comprendono il riepilogo e non
-possono sincronizzare correttamente una cronologia già ripulita.
+**Update Sekeeper on every PC before enabling 0.2.0+ sync.** Older builds do not
+understand the lineage summary and cannot sync a pruned history.
 
-La prima sincronizzazione deve ancora scaricare e verificare lo storico
-esistente. Le successive lavorano sulle copie complete rimaste. Non impostare
-regole di scadenza sugli oggetti correnti: la pulizia viene gestita dall'applicazione.
+The initial sync still downloads and verifies existing history; subsequent syncs work
+only on the remaining full copies. Do not configure expiration rules on current
+objects — Sekeeper manages retention itself.
 
-Se usi **S3 Versioning**, `DeleteObject` aggiunge un marcatore di cancellazione:
-le vecchie versioni fisiche possono rimanere memorizzate e fatturate. Il limite
-riguarda le copie correnti elencate dall'applicazione. Per liberare anche lo
-spazio delle versioni non correnti puoi configurare separatamente una regola
-`NoncurrentVersionExpiration` sul solo prefisso del vault. Sekeeper non modifica
-le regole del bucket e non richiede `s3:DeleteObjectVersion`.
-[Comportamento delle cancellazioni su S3](https://docs.aws.amazon.com/AmazonS3/latest/userguide/DeletingObjectVersions.html).
+With **S3 Versioning** enabled, `DeleteObject` inserts a delete marker while physical
+non-current versions may continue incurring storage costs. The 30-copy limit applies
+to current objects listed by Sekeeper. To expire non-current versions, configure a
+separate `NoncurrentVersionExpiration` lifecycle rule scoped strictly to the vault
+prefix. Sekeeper never modifies bucket rules and does not require
+`s3:DeleteObjectVersion`.
+[Deleting object versions in S3](https://docs.aws.amazon.com/AmazonS3/latest/userguide/DeletingObjectVersions.html).
 
-### Come avviene la sincronizzazione
+### How synchronization works
 
-Con il prefisso di esempio le copie vengono salvate come
-`sekeeper/personale/v3/versions/<identificativo-casuale>.sek`. Ogni copia contiene un
-vault interamente cifrato, con identificativo della versione, versioni precedenti,
-nome del dispositivo e data protetti dalla stessa cifratura autenticata. La data
-serve alla visualizzazione, non a decidere quale copia prevale.
+With the example prefix, copies are stored at
+`sekeeper/personal/v3/versions/<random-id>.sek`. Each copy is a complete encrypted
+vault whose revision ID, parent IDs, device name, and timestamp are protected by the
+same authenticated encryption. Timestamps are for display, not head selection.
 
-La sincronizzazione avviene allo sblocco, dopo i salvataggi e ogni minuto mentre il
-vault è aperto. Si può richiedere anche con **S3… → Sincronizza ora**. Il traffico
-di rete e l'accesso al portachiavi avvengono su thread di lavoro. Una richiesta già
-in corso può terminare dopo il blocco del vault, ma non può installare una copia
-remota in una sessione bloccata o successivamente riaperta.
+Sync runs on unlock, after saves, and every minute while the vault is open, or on
+demand via **S3… → Sync now**. Networking and keyring calls run on worker threads. An
+in-flight request may finish after the vault locks, but cannot install a remote copy
+into a locked or subsequently reopened session.
 
-- Se la copia remota discende da quella locale, viene installata dopo la verifica
-  crittografica e il backup locale. L'aggiornamento viene rimandato se c'è un editor
-  aperto. Un'ulteriore modifica locale durante il trasferimento viene ricontrollata.
-- Se ci sono versioni divergenti, vengono conservate e pubblicate entrambe. Apri
-  **S3… → Versioni e conflitti…** e scegli esplicitamente quale contenuto usare.
-  Per ogni versione vengono indicate le voci che recupereresti, perderesti o
-  vedresti cambiare rispetto al vault attuale. La scelta crea una nuova versione
-  che riconosce entrambe le precedenti; non effettua una fusione automatica delle
-  singole credenziali. Le copie precedenti
-  ancora conservate restano recuperabili dallo stesso elenco.
-- Senza rete, o con accesso AWS negato, il vault locale continua a funzionare. Le
-  modifiche restano nella cronologia cifrata e vengono riproposte al prossimo
-  tentativo. Un errore di predisposizione della cronologia successivo al salvataggio
-  non annulla una modifica già salvata nel vault locale.
-- Le copie remote vengono autenticate prima di pubblicare i dati locali verso una
-  destinazione già popolata. Un vault diverso nello stesso prefisso, un file
-  alterato o una cronologia incompleta interrompono la sincronizzazione. Le copie
-  locali residue di un vault cancellato e ricreato vengono invece ignorate.
+- If the remote copy descends from the local one, it is installed after cryptographic
+  verification and local backup. Installation is deferred while an editor dialog is
+  open, and concurrent local edits are re-checked.
+- If diverging versions exist, both are preserved and published. Open **S3… →
+  Versions and conflicts…** and explicitly choose which version to keep. Each version
+  shows which entries would be recovered, lost, or modified relative to your current
+  vault. Your choice creates a merge revision recognizing both parents (no automatic
+  per-credential merge). Remaining historical copies stay recoverable from the same
+  list.
+- Without network access or with AWS access denied, the local vault keeps working;
+  edits remain in encrypted history and are retried later. A history preparation
+  error after saving does not roll back an already-saved local vault edit.
+- Remote copies are authenticated before publishing local data to a non-empty
+  destination. A foreign vault under the same prefix, tampered file, or incomplete
+  history halts sync. Leftover local copies from a deleted and recreated vault are
+  ignored.
 
-### Recuperare il vault su un PC nuovo
+### Recovering the vault on a new PC
 
-Per un **PC nuovo**, configura S3 dalla schermata iniziale e premi **Recupera da
-S3…**, usando la password principale e una copia identica del file chiave del
-vault originale. Non creare un secondo vault indipendente nello stesso prefisso.
-Se esistono più versioni divergenti, scegli quella da recuperare. Il recupero non
-sovrascrive un vault o backup locali
-già presenti: per un file locale danneggiato prova prima i backup locali; conserva
-poi una copia dei file `vault` e `vault.v3.bak.*` prima di spostarli altrove e avviare
-il recupero S3.
+On a **new PC**, configure S3 from the initial screen and click **Recover from
+S3…**, supplying the master password and an identical copy of the original vault's
+key file. Do not create a second independent vault under the same prefix. If
+diverging versions exist, choose which one to recover. Recovery never overwrites an
+existing local vault or backups: if a local file is damaged, try local backups first;
+otherwise back up `vault` and `vault.v3.bak.*` elsewhere before starting S3 recovery.
 
-Se il bucket v3 è ancora vuoto, premi **Crea un nuovo vault vuoto** nella schermata
-di recupero per iniziare da zero senza disattivare S3. Per gli altri PC recupera
-poi il vault appena creato. La policy IAM sul prefisso `sekeeper/*` resta valida.
+If the v3 bucket is still empty, click **Create a new empty vault** on the recovery
+screen to start fresh without disabling S3, then recover that vault on other PCs. The
+IAM policy on `sekeeper/*` remains valid.
 
-### Trasporto e limiti dello storico
+### Transport and history limits
 
-Il trasporto usa HTTPS e la firma AWS SigV4 fornita da `curl`. Gli helper vengono
-verificati e avviati dal descrittore del binario, evitando ricerche nel `PATH` o
-una sostituzione del percorso tra controllo e avvio. Ricevono un ambiente minimo:
-non ereditano override del loader, di GIO, dei certificati TLS o dei proxy.
-Le chiavi vengono passate attraverso una pipe, non negli argomenti del processo.
-Il corpo cifrato da caricare viene copiato in un `memfd` sigillato contro scritture
-e ridimensionamenti; soltanto il processo di caricamento ne eredita il descrittore,
-senza riaprire percorsi della cache sul disco. Ogni caricamento
-usa `If-None-Match: *`: un oggetto esistente non viene sovrascritto, e una risposta
-412 viene verificata scaricando la copia esistente. La pulizia rimuove soltanto
-gli identificativi superati appartenenti alla cronologia autenticata del vault,
-nel suo prefisso configurato. Le cache evitano di scaricare nuovamente lo storico
-già presente sul PC. Una copia scaricata entra nella cache solo dopo essere stata
-autenticata con la chiave del vault, e solo se la revisione che contiene coincide
-con il nome dell'oggetto; nel recupero su un PC nuovo, solo dopo la verifica con
-password e file chiave. Una copia manomessa o danneggiata resta quindi in memoria,
-fa fallire la sincronizzazione e viene riscaricata dopo la riparazione del bucket.
-Le cache scritte da versioni precedenti vengono ripulite allo stesso modo al primo
-errore. Le risposte di `curl` vengono lette fino al limite di una copia, anche con
-versioni di `curl` che non lo applicano da sole. Ogni fase di trasferimento ha un limite di tempo; un invio
-interrotto viene ripreso in un tentativo successivo senza duplicare le versioni.
+Transport uses HTTPS with AWS SigV4 signing provided by `curl`. Helpers are validated
+and launched by binary file descriptor, avoiding `PATH` lookups or TOCTOU path swaps.
+They receive a minimal environment without loader, GIO, TLS certificate, or proxy
+overrides. Credentials travel over a pipe, never in process arguments. Encrypted
+upload bodies are copied into a write/resize-sealed `memfd` inherited only by the
+upload helper without reopening disk cache paths. Every upload sends
+`If-None-Match: *` so existing objects are never overwritten, and `412` responses are
+verified by downloading the existing object. Pruning deletes only superseded IDs
+belonging to the vault's authenticated history under its configured prefix.
 
-Sono previsti limiti difensivi di 16 MiB per copia, 2048 copie complete e 64 MiB di
-dati cifrati per cronologia elaborata, oltre a 65.536 collegamenti nel riepilogo di
-un vault. Restano applicabili al primo consolidamento e ai conflitti ancora
-aperti. Al raggiungimento del limite la sincronizzazione si ferma, mantenendo
-utilizzabile il vault locale. La conservazione ordinaria di 30 copie evita la
-crescita indefinita dei file completi, mentre i metadati delle revisioni restano
-necessari per i PC offline. Disabilitare S3 non cancella i file locali o remoti;
-restano utili backup indipendenti dal bucket.
+Local caches avoid re-downloading previously fetched history. Downloaded copies enter
+the cache only after authentication with the vault key and verification that the
+contained revision ID matches the object name (or after password + key file
+verification during new-PC recovery). A tampered or corrupted copy stays in memory,
+causes sync to fail, and is re-fetched once the bucket is repaired; older caches are
+cleaned on the first error. `curl` responses are capped while reading up to the copy
+size limit even on `curl` versions that do not enforce `--max-filesize` on chunked
+transfers. Each transfer step has a deadline, and interrupted uploads resume cleanly
+without duplicating revisions.
 
-## Sicurezza e formato dei dati
+Defensive limits cap snapshots at 16 MiB each, 2048 full copies, 64 MiB of encrypted
+history processed, and 65,536 lineage links per vault. If a limit is hit, sync halts
+while keeping the local vault usable. Regular 30-copy retention prevents unbounded
+growth of full snapshots while preserving revision metadata for offline PCs.
+Disabling S3 never deletes local or remote files.
 
-### Cifratura del vault
+## Security and data format
 
-Il formato corrente è `SEKEEPER`, **versione 3**, con file chiave obbligatorio.
-I precedenti formati v1 e v2 vengono rifiutati; non è prevista una migrazione.
-Crea un nuovo vault dopo aver rimosso o archiviato quelli di prova. I backup, la
-cronologia, la cache e lo spazio S3 del nuovo formato sono separati da quelli
-precedenti. La configurazione S3 e le credenziali nel portachiavi possono essere
-riutilizzate.
+### Vault encryption
 
-- Argon2id versione 0x13, **256 MiB**, **3 passaggi**, parallelismo **4**;
-- file chiave con segreto casuale di 32 byte come input segreto K di Argon2id;
-- chiave derivata di 32 byte, sale casuale di 16 byte;
-- AES-256-GCM, nonce casuale di 12 byte e tag di 16 byte;
-- JSON cifrato per tutti i campi delle credenziali;
-- intestazione di 52 byte, autenticata integralmente come AAD di AES-GCM.
+The current format is `SEKEEPER`, **version 3**, with mandatory key file. Earlier v1
+and v2 formats are rejected with no migration path; create a new vault after
+archiving old test vaults. Backups, history, cache, and S3 paths for v3 are separate
+from earlier formats, while S3 configuration and keyring credentials can be reused.
 
-L'intestazione contiene magic, versione del formato, identificativi di KDF,
-versione Argon2 e cifrario, costi Argon2 come tre interi little endian di 32 bit,
-sale e nonce. Sono accettati soltanto i parametri del profilo v3: intestazioni con
-costi ridotti, eccessivi o sconosciuti vengono rifiutate prima di eseguire il KDF.
-Il profilo non dipende dai valori predefiniti delle librerie. La memoria di lavoro
-Argon2 viene azzerata anche in caso di errore; un fallimento dell'allocazione
-rilevabile viene segnalato senza ripiegare su parametri più deboli.
+- Argon2id version `0x13`, **256 MiB**, **3 iterations**, parallelism **4**;
+- 32-byte random key file secret fed as Argon2id secret input `K`;
+- 32-byte derived key, 16-byte random salt;
+- AES-256-GCM with 12-byte random nonce and 16-byte authentication tag;
+- Encrypted JSON payload for all credential fields;
+- 52-byte header authenticated in full as AES-GCM AAD.
 
-### Protezione dei file e del processo
+The header carries magic, format version, KDF/Argon2/cipher identifiers, Argon2 cost
+parameters as three little-endian 32-bit integers, salt, and nonce. Only the exact v3
+profile is accepted: headers with weaker, excessive, or unknown parameters are
+rejected before running the KDF. The profile does not depend on library defaults.
+Argon2 working memory is zeroized even on error; detectable allocation failures
+return an error without falling back to weaker parameters.
 
-Il vault, le copie e il file di coordinamento vengono scritti con permessi `0600`,
-la directory con `0700`. Le scritture usano file temporanei e sostituzione atomica.
-Le modifiche esterne vengono rilevate prima del salvataggio: in quel caso occorre
-bloccare e riaprire il vault, invece di sovrascrivere silenziosamente altri dati.
+### File and process hardening
 
-Le directory vengono percorse un componente alla volta con `openat` e
-`O_NOFOLLOW`, e letture, scritture, rinomine e pulizia dei temporanei usano
-descrittori di directory mantenuti aperti. Sono rifiutati link simbolici, file non
-regolari, hard link, proprietari inattesi e accessi a file leggibili/scrivibili da
-gruppo o altri utenti. Un percorso di dati con link simbolici, anche in un
-componente intermedio, non è supportato. La creazione di directory viene
-sincronizzata anche nella directory superiore.
+The vault, backups, and lock file are created with `0600` permissions inside a `0700`
+directory using temporary files and atomic replacement. External modifications are
+detected before saving so you must lock and reopen rather than silently overwriting
+other changes.
 
-All'avvio, prima di inizializzare GTK o caricare segreti, il processo imposta
-`PR_SET_DUMPABLE=0`, limiti soft e hard `RLIMIT_CORE=0`, `PR_SET_NO_NEW_PRIVS=1`
-e `umask 077`. Se non può attivare queste protezioni, termina senza aprire il vault.
-La protezione non modifica le impostazioni globali del computer. Gli helper
-ereditano il limite sui core dump e il divieto di acquisire nuovi privilegi.
+Directories are traversed one component at a time using `openat` and `O_NOFOLLOW`,
+and reads, writes, renames, and temporary cleanup operate on open directory file
+descriptors. Symlinks, non-regular files, hard links, unexpected owners, and
+group/other accessible files are rejected. Data paths containing symlinks (including
+intermediate components) are not supported. Directory creation is synced in the
+parent directory as well.
 
-I buffer gestiti da Rust per password principale, chiave, credenziali, JSON in
-chiaro e memoria di lavoro Argon2 vengono azzerati alla distruzione. Sono abilitate
-anche le opzioni di azzeramento delle librerie crittografiche. Questo riduce le
-copie residue, senza garantire l'assenza di ogni copia temporanea creata da GTK,
-dal compilatore o dal sistema operativo. La cifratura protegge il file a riposo;
-non protegge da un malware che osserva una sessione già sbloccata.
+At startup, before initializing GTK or loading secrets, the process sets
+`PR_SET_DUMPABLE=0`, soft and hard `RLIMIT_CORE=0`, `PR_SET_NO_NEW_PRIVS=1`, and
+`umask 077`, exiting immediately if any protection cannot be enabled. Helpers inherit
+core dump disablement and `NO_NEW_PRIVS`.
 
-### Formato del file chiave
+Rust-managed buffers for master password, derived key, credentials, plaintext JSON,
+and Argon2 working memory are zeroized on drop, with cryptographic crate zeroize
+features enabled. This minimizes residual copies without guaranteeing the absence of
+transient copies created by GTK, the compiler, or the OS. Encryption protects the
+vault at rest; it does not defend against malware observing an already-unlocked
+session.
 
-Il formato del file è `SEKEY001` (8 byte), segreto (32 byte), checksum SHA-256 dei
-primi 40 byte (32 byte): 72 byte in totale. Il checksum rileva corruzioni accidentali;
-non cifra il file.
+### Key file format
 
-## Limiti attuali
+`SEKEY001` (8 bytes) + random secret (32 bytes) + SHA-256 checksum of the first 40
+bytes (32 bytes) = 72 bytes total. The checksum detects accidental corruption; it
+does not encrypt the file.
 
-Sekeeper mantiene un ambito essenziale:
+## Current limitations
 
-- È un'applicazione desktop per **Linux**. L'app per telefono
-  [Sekeeper per Android](../sekeeper-android) per ora consulta il vault in sola
-  lettura. Non sono previste estensioni browser né compilazione automatica dei moduli.
-- Non include lo sblocco con codici Authenticator/TOTP. Il secondo fattore del
-  vault è il file chiave.
-- Non è previsto il cambio diretto della password principale o del file chiave:
-  passa da [esportazione e importazione](#importare-ed-esportare) in un nuovo vault.
-- La sincronizzazione collega copie dello **stesso vault**. I conflitti richiedono
-  la scelta di una versione completa, senza fusione delle singole voci.
-- La pulizia S3 conserva 30 copie complete e sospende le cancellazioni in caso
-  di conflitto. Il riepilogo cifrato dei collegamenti rimane soggetto ai limiti
-  descritti sopra; le copie rimosse non sono più recuperabili dall'elenco dell'app.
-- I formati di prova v1 e v2 non vengono aperti dal formato corrente v3;
-  non è prevista una migrazione.
+Sekeeper keeps its scope intentionally focused:
 
-La protezione del vault richiede una buona password principale e la custodia
-separata del file chiave. I backup cifrati aiutano a recuperare i dati, ma non
-sostituiscono la copia di recupero del file chiave.
+- Desktop application for **Linux**. [Sekeeper for Android](../sekeeper-android)
+  currently views the vault read-only. Browser extensions and autofill are out of
+  scope.
+- No TOTP/Authenticator unlock: the vault's second factor is the key file.
+- No in-place master password or key file rotation: use
+  [export and import](#importing-and-exporting) into a new vault.
+- Sync links copies of the **same vault**. Conflicts require picking a complete
+  revision rather than merging individual credentials.
+- S3 cleanup keeps 30 full copies and pauses deletion during conflicts. The encrypted
+  lineage summary remains subject to the limits above; pruned copies can no longer be
+  restored from the app's list.
+- Legacy v1 and v2 test formats are not opened by v3, with no migration path.
 
-## Verifiche per lo sviluppo
+Vault security relies on a strong master password and separate custody of the key
+file. Encrypted backups help recover vault data, but never replace a recovery copy of
+the key file.
 
-Il repository include sorgenti, `Cargo.lock`, risorse grafiche, ricetta Arch e
-fixture pubbliche. Il `.gitignore` esclude directory di compilazione, pacchetti
-generati, configurazioni locali, vault e file chiave personali. L'eccezione
-`tests/fixtures/public-test.key` serve esclusivamente ai test e va mantenuta.
-`Cargo.lock` va conservato per usare le versioni delle dipendenze già verificate.
+## Development checks
+
+The repository includes sources, `Cargo.lock`, graphic resources, Arch recipe, and
+public test fixtures. `.gitignore` excludes build artifacts, generated packages,
+local config, personal vaults, and personal key files. The exception
+`tests/fixtures/public-test.key` is strictly for tests and must be kept. Keep
+`Cargo.lock` to reproduce verified dependency versions.
 
 ```sh
 cargo test --locked --all-targets
@@ -668,10 +625,10 @@ cargo clippy --locked --all-targets -- -D warnings
 cargo fmt --all -- --check
 ```
 
-Dopo una modifica a `sekeeper-core` esegui anche i suoi test, dalla sua cartella,
-e poi di nuovo quelli di questo progetto. La feature `testing` della libreria
-espone le chiavi di prova pubbliche usate dalle fixture: questo progetto la attiva
-solo tra le dipendenze di sviluppo e non va mai attivata nelle build normali.
+After modifying `sekeeper-core`, run its test suite too and then re-run this
+project's tests. The `testing` feature of `sekeeper-core` exposes public test keys
+for fixtures: this crate enables it only under `[dev-dependencies]` and must never
+enable it for normal builds.
 
 ```sh
 cd ../sekeeper-core
@@ -679,52 +636,49 @@ cargo test
 cargo clippy --all-targets --all-features -- -D warnings
 ```
 
-Il test grafico richiede un display ed è escluso dai test ordinari. Con Xvfb, oppure
-in una sessione `kwin_wayland --virtual` per non aprire finestre sul desktop:
+The GUI test requires a display and is excluded from default runs. Use Xvfb or
+`kwin_wayland --virtual` to avoid opening desktop windows:
 
 ```sh
 xvfb-run -a cargo test --locked ui::tests -- --ignored
 ```
 
-Verifica l'apertura dei selettori di generazione e scelta del file chiave,
-creazione e sblocco con file chiave obbligatorio, salvataggi con il supporto
-scollegato, ricerca e operazioni sulle voci filtrate, pannello di dettaglio, copia e
-svuotamento degli appunti, generatore di password, percorso ricordato del file chiave,
-pulizia dell'editor al blocco per inattività e ripristino dall'interfaccia. Gli altri test verificano generazione,
-integrità e permessi del file chiave, rifiuto del secondo fattore errato, ricerca,
-date, cifratura, alterazioni, rifiuto del vecchio formato, permessi, backup,
-concorrenza ed errori di scrittura. Sono verificati anche dump e privilegi in processi isolati, gli
-eseguibili, i file sigillati e gli accessi ostili al filesystem. I test di
-conservazione verificano il limite di 30 copie, recupero su PC nuovo, ritorno di
-un PC offline, conflitti, metadati alterati e ripresa dopo errori di caricamento,
-verifica o cancellazione. I test ordinari non cancellano oggetti AWS reali.
-La fixture `tests/fixtures/vault-v3` contiene solo dati fittizi pubblici e usa la
-password `public fixture master password` e il file `tests/fixtures/public-test.key`
-(segreto pubblico di test, 32 byte `0x42`). Non usare mai questi valori per un vault
-reale. Le fixture v1 e v2 verificano il rifiuto dei vecchi formati.
+It exercises key file generation/chooser dialogs, vault creation and mandatory key
+file unlock, saving with the key file drive disconnected, search and filtered
+operations, details pane, clipboard copy/clear, password generator, remembered key
+file path, editor scrubbing on idle lock, and backup restore. Other tests verify key
+file generation/integrity/permissions, wrong second factor rejection, search,
+timestamps, encryption, tampering, legacy format rejection, permissions, backups,
+concurrency, write errors, process dump/privilege isolation, helper binary checks,
+sealed `memfd` uploads, hostile filesystem setups, and 30-copy retention/recovery/
+offline/conflict scenarios. Default tests never touch real AWS objects.
 
-### Test di integrazione S3 reale
+The fixture `tests/fixtures/vault-v3` contains only public dummy data encrypted with
+password `public fixture master password` and `tests/fixtures/public-test.key`
+(32 bytes of `0x42`). Never use these values for a real vault. The v1 and v2 fixtures
+verify rejection of legacy formats.
 
-I test ordinari usano un servizio in memoria e un processo di trasporto fittizio;
-non leggono credenziali AWS reali e non contattano bucket. Il test reale è escluso
-per impostazione predefinita. Per eseguirlo configura esplicitamente queste
-variabili nell'ambiente del processo, senza inserirle nel repository:
+### Live AWS S3 integration test
+
+Standard tests use an in-memory service and a mock transport; they never read real
+AWS credentials or contact real buckets. The live test is ignored by default. To run
+it, export these environment variables without committing them:
 
 - `SEKEEPER_S3_TEST_BUCKET`
 - `SEKEEPER_S3_TEST_REGION`
 - `SEKEEPER_S3_TEST_ACCESS_KEY_ID`
 - `SEKEEPER_S3_TEST_SECRET_ACCESS_KEY`
-- `SEKEEPER_S3_TEST_SESSION_TOKEN`, solo se necessario
+- `SEKEEPER_S3_TEST_SESSION_TOKEN` (only if required)
 
 ```sh
 cargo test --locked s3::tests::aws_s3_live_roundtrip_and_conditional_upload -- --ignored
 ```
 
-Il test carica solo un vault fittizio con password e file chiave di test pubblici,
-sotto un nuovo prefisso `sekeeper/integration-test-…/`, e verifica lettura, elenco e protezione dalle
-sovrascritture. Lascia l'oggetto nel bucket, perché l'identità non ha permessi di
-cancellazione. È un'operazione reale soggetta alle tariffe AWS.
+This test uploads only a dummy vault with the public test password and key file under
+a fresh `sekeeper/integration-test-…/` prefix, verifying read, list, and overwrite
+protection. It leaves the object in the bucket because the test identity needs no
+delete permission. This is a live AWS operation subject to AWS pricing.
 
-## Licenza
+## License
 
-Codice e icona sono distribuiti con [licenza MIT](LICENSE).
+Code and icon are distributed under the [MIT License](LICENSE).

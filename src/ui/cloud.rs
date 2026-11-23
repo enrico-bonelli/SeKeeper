@@ -24,9 +24,9 @@ impl State {
         let config = match s3::Config::load(path) {
             Ok(config) => {
                 status.set_text(if config.as_ref().is_some_and(|c| c.enabled) {
-                    "S3: pronto"
+                    tr("S3: ready", "S3: pronto")
                 } else {
-                    "S3: disattivato"
+                    tr("S3: disabled", "S3: disattivato")
                 });
                 config
             }
@@ -94,20 +94,21 @@ pub fn request_sync(state: &SharedState) {
         state.cloud.last_attempt.set(Instant::now());
         return;
     }
-    let config = state.cloud.config.borrow().clone().expect("S3 configurato");
+    let config = state.cloud.config.borrow().clone().expect("S3 configured");
     state.cloud.last_attempt.set(Instant::now());
     let preparation = state
         .vault
         .borrow_mut()
         .as_mut()
-        .expect("vault aperto")
+        .expect("open vault")
         .enable_sync(&config.device);
     match preparation {
         Ok(SaveOutcome::Durable) => {}
         Ok(_) => {
-            state.cloud.status.set_text(
+            state.cloud.status.set_text(tr(
+                "S3: local copy saved, but history retention is unconfirmed; please retry",
                 "S3: copia locale salvata, ma conservazione dello storico non confermata; riprova",
-            );
+            ));
             return;
         }
         Err(error) => {
@@ -118,7 +119,10 @@ pub fn request_sync(state: &SharedState) {
     state.cloud.busy.set(true);
     state.cloud.pending.set(false);
     state.cloud.last_attempt.set(Instant::now());
-    state.cloud.status.set_text("S3: controllo delle copie…");
+    state
+        .cloud
+        .status
+        .set_text(tr("S3: checking copies…", "S3: controllo delle copie…"));
     let generation = state.cloud.generation.get();
     let revision = state
         .vault
@@ -152,7 +156,13 @@ pub fn request_sync(state: &SharedState) {
                     return;
                 }
                 if generation != state.cloud.generation.get() || state.vault.borrow().is_none() {
-                    finish(&state, "S3: operazione terminata; vault bloccato");
+                    finish(
+                        &state,
+                        tr(
+                            "S3: operation finished; vault locked",
+                            "S3: operazione terminata; vault bloccato",
+                        ),
+                    );
                     return;
                 }
                 let remote = match result {
@@ -188,15 +198,27 @@ pub fn request_sync(state: &SharedState) {
                 match step.next {
                     Ok(sync::Next::LocalChanged) => {
                         state.cloud.pending.set(true);
-                        finish(&state, "S3: nuove modifiche locali da sincronizzare");
+                        finish(
+                            &state,
+                            tr(
+                                "S3: new local changes to sync",
+                                "S3: nuove modifiche locali da sincronizzare",
+                            ),
+                        );
                     }
                     Ok(sync::Next::UpdateDeferred) => finish(
                         &state,
-                        "S3: nuova versione disponibile; chiudi l'editor per aggiornarla",
+                        tr(
+                            "S3: new version available; close the editor to update",
+                            "S3: nuova versione disponibile; chiudi l'editor per aggiornarla",
+                        ),
                     ),
                     Ok(sync::Next::RetentionPending) => finish(
                         &state,
-                        "S3: riepilogo locale salvato; conservazione non confermata, pulizia rimandata",
+                        tr(
+                            "S3: local summary saved; durability unconfirmed, pruning deferred",
+                            "S3: riepilogo locale salvato; conservazione non confermata, pulizia rimandata",
+                        ),
                     ),
                     Ok(sync::Next::Publish {
                         publication,
@@ -216,13 +238,13 @@ pub fn resume_if_pending(state: &SharedState) {
 }
 
 fn publish(state: &SharedState, publication: sync::Publication, generation: u64, conflict: bool) {
-    let config = state.cloud.config.borrow().clone().expect("S3 configurato");
+    let config = state.cloud.config.borrow().clone().expect("S3 configured");
     let cache = config.cache(&state.vault_path);
     let vault_path = state.vault_path.clone();
-    state
-        .cloud
-        .status
-        .set_text("S3: invio delle copie cifrate…");
+    state.cloud.status.set_text(tr(
+        "S3: uploading encrypted copies…",
+        "S3: invio delle copie cifrate…",
+    ));
     job(
         move || -> s3::Result<_> {
             publication.send(&mut s3::S3::connect(config)?, &cache, &vault_path)?;
@@ -236,20 +258,28 @@ fn publish(state: &SharedState, publication: sync::Publication, generation: u64,
                     return;
                 }
                 if generation != state.cloud.generation.get() {
-                    finish(&state, "S3: trasferimento terminato");
+                    finish(
+                        &state,
+                        tr("S3: transfer finished", "S3: trasferimento terminato"),
+                    );
                     return;
                 }
                 let message = match result {
                     Err(error) => format!("S3: {error}"),
-                    Ok(_) if conflict => {
-                        "S3: conflitto tra versioni. Apri S3 → Versioni e conflitti per scegliere."
-                            .into()
-                    }
+                    Ok(_) if conflict => tr(
+                        "S3: version conflict. Open S3 → Versions and conflicts to choose.",
+                        "S3: conflitto tra versioni. Apri S3 → Versioni e conflitti per scegliere.",
+                    )
+                    .into(),
                     Ok(publication) => {
                         if let Some(catalog) = state.cloud.catalog.borrow_mut().as_mut() {
                             catalog.retained(&publication);
                         }
-                        "S3: copie sincronizzate; fino a 30 versioni complete conservate".into()
+                        tr(
+                            "S3: copies synced; up to 30 complete versions retained",
+                            "S3: copie sincronizzate; fino a 30 versioni complete conservate",
+                        )
+                        .into()
                     }
                 };
                 finish(&state, &message);
@@ -270,39 +300,47 @@ pub fn show_settings(state: &SharedState) {
     if state.cloud.busy.get() || state.unlocking.get() {
         show_error(
             &state.window,
-            "Attendi il completamento dell'operazione S3 in corso.",
+            tr(
+                "Wait for the current S3 operation to finish.",
+                "Attendi il completamento dell'operazione S3 in corso.",
+            ),
         );
         return;
     }
     let config = state.cloud.config.borrow().clone().unwrap_or_default();
     let had_config = state.cloud.config.borrow().is_some();
     let dialog = Dialog::builder()
-        .title("Copie cifrate su AWS S3")
+        .title(tr("Encrypted copies on AWS S3", "Copie cifrate su AWS S3"))
         .transient_for(&state.window)
         .modal(true)
         .default_width(550)
         .build();
     track_dialog(state, &dialog);
-    dialog.add_button("Annulla", ResponseType::Cancel);
-    let save = dialog.add_button("Salva", ResponseType::Accept);
+    dialog.add_button(tr("Cancel", "Annulla"), ResponseType::Cancel);
+    let save = dialog.add_button(tr("Save", "Salva"), ResponseType::Accept);
     let content = dialog.content_area();
     content.set_spacing(12);
     content.set_margin_top(18);
     content.set_margin_bottom(18);
     content.set_margin_start(18);
     content.set_margin_end(18);
-    let enabled = gtk4::CheckButton::with_label("Abilita copie e sincronizzazione S3");
+    let enabled = gtk4::CheckButton::with_label(tr(
+        "Enable S3 copies and sync",
+        "Abilita copie e sincronizzazione S3",
+    ));
     enabled.set_active(config.enabled);
     content.append(&enabled);
-    let explanation = Label::new(Some(
+    let explanation = Label::new(Some(tr(
+        "Use the same bucket and prefix on your PCs. The vault remains available offline. Credentials are stored in this PC's keyring.",
         "Usa lo stesso bucket e prefisso sui tuoi PC. Il vault resta disponibile senza rete. Le credenziali vengono conservate nel portachiavi di questo PC.",
-    ));
+    )));
     explanation.set_wrap(true);
     explanation.set_max_width_chars(60);
     content.append(&explanation);
-    let retention = Label::new(Some(
+    let retention = Label::new(Some(tr(
+        "Retention: latest 30 complete copies. Open conflicts pause pruning. Requires the IAM permission s3:DeleteObject on the vault prefix; update Sekeeper on all your PCs.",
         "Conservazione: ultime 30 copie complete. I conflitti aperti sospendono la pulizia. Serve il permesso IAM s3:DeleteObject sul prefisso del vault; aggiorna Sekeeper su tutti i PC.",
-    ));
+    )));
     retention.set_wrap(true);
     retention.set_max_width_chars(60);
     content.append(&retention);
@@ -319,20 +357,28 @@ pub fn show_settings(state: &SharedState) {
     let device = Entry::new();
     device.set_text(&config.device);
     let access = Entry::new();
-    access.set_placeholder_text(Some("Lascia vuoto per mantenere le chiavi salvate"));
+    access.set_placeholder_text(Some(tr(
+        "Leave blank to keep saved keys",
+        "Lascia vuoto per mantenere le chiavi salvate",
+    )));
     let secret = PasswordEntry::new();
     secret.set_show_peek_icon(true);
     let token = PasswordEntry::new();
     token.set_show_peek_icon(true);
     attach_field(&grid, 0, "Bucket", &bucket);
-    attach_field(&grid, 1, "Regione", &region);
-    attach_field(&grid, 2, "Prefisso", &prefix);
-    attach_field(&grid, 3, "Nome PC", &device);
+    attach_field(&grid, 1, tr("Region", "Regione"), &region);
+    attach_field(&grid, 2, tr("Prefix", "Prefisso"), &prefix);
+    attach_field(&grid, 3, tr("PC name", "Nome PC"), &device);
     attach_field(&grid, 4, "Access Key ID", &access);
     attach_field(&grid, 5, "Secret Access Key", &secret);
-    attach_field(&grid, 6, "Session token (opzionale)", &token);
+    attach_field(
+        &grid,
+        6,
+        tr("Session token (optional)", "Session token (opzionale)"),
+        &token,
+    );
     if state.vault.borrow().is_some() && state.cloud.enabled() {
-        let now = Button::with_label("Sincronizza ora");
+        let now = Button::with_label(tr("Sync now", "Sincronizza ora"));
         content.append(&now);
         now.connect_clicked(clone!(
             #[weak]
@@ -344,7 +390,7 @@ pub fn show_settings(state: &SharedState) {
                 request_sync(&state);
             }
         ));
-        let versions = Button::with_label("Versioni e conflitti…");
+        let versions = Button::with_label(tr("Versions and conflicts…", "Versioni e conflitti…"));
         content.append(&versions);
         versions.connect_clicked(clone!(
             #[weak]
@@ -407,7 +453,10 @@ pub fn show_settings(state: &SharedState) {
                 && token.text().is_empty()
             {
                 if next.enabled && !had_config {
-                    message.set_text("Inserisci le credenziali AWS del dispositivo.");
+                    message.set_text(tr(
+                        "Enter the AWS credentials for this device.",
+                        "Inserisci le credenziali AWS del dispositivo.",
+                    ));
                     return;
                 }
                 None
@@ -469,9 +518,9 @@ pub fn show_settings(state: &SharedState) {
                                     dialog.close();
                                 }
                                 state.cloud.status.set_text(if state.cloud.enabled() {
-                                    "S3: pronto"
+                                    tr("S3: ready", "S3: pronto")
                                 } else {
-                                    "S3: disattivato"
+                                    tr("S3: disabled", "S3: disattivato")
                                 });
                                 if state.vault.borrow().is_some() {
                                     request_sync(&state);
@@ -479,7 +528,13 @@ pub fn show_settings(state: &SharedState) {
                                     show_authentication(&state);
                                 }
                                 if !matches!(outcome, SaveOutcome::Durable) {
-                                    show_error(&state.window, "Le impostazioni S3 sono state aggiornate, ma la loro conservazione in caso di spegnimento improvviso non è confermata.");
+                                    show_error(
+                                        &state.window,
+                                        tr(
+                                            "S3 settings were updated, but durability in the event of a sudden power loss is not confirmed.",
+                                            "Le impostazioni S3 sono state aggiornate, ma la loro conservazione in caso di spegnimento improvviso non è confermata.",
+                                        ),
+                                    );
                                 }
                             }
                             Err(error) => {
@@ -506,7 +561,11 @@ fn describe(snapshot: &sync::Snapshot, head: bool) -> String {
         format_timestamp(Some(snapshot.revision.created_at)),
         snapshot.revision.device,
         &snapshot.id[..8],
-        if head { " (corrente)" } else { "" }
+        if head {
+            tr(" (current)", " (corrente)")
+        } else {
+            ""
+        }
     )
 }
 
@@ -519,7 +578,12 @@ fn names(entries: &[String]) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     if entries.len() > SHOWN {
-        text.push_str(&format!(" e altre {}", entries.len() - SHOWN));
+        let rest = entries.len() - SHOWN;
+        text.push_str(&if is_italian() {
+            format!(" e altre {rest}")
+        } else {
+            format!(" and {rest} more")
+        });
     }
     text
 }
@@ -530,21 +594,41 @@ fn describe_difference(state: &SharedState, snapshot: &sync::Snapshot) -> String
         return String::new();
     };
     let Ok(other) = vault.read_credentials(&snapshot.bytes) else {
-        return "Impossibile confrontare questa versione.".into();
+        return tr(
+            "Unable to compare this version.",
+            "Impossibile confrontare questa versione.",
+        )
+        .into();
     };
     let diff = sync::compare(&vault.data.credentials, &other);
     let mut lines = Vec::new();
     if !diff.added.is_empty() {
-        lines.push(format!("Recupererai: {}", names(&diff.added)));
+        lines.push(format!(
+            "{}: {}",
+            tr("You will recover", "Recupererai"),
+            names(&diff.added)
+        ));
     }
     if !diff.removed.is_empty() {
-        lines.push(format!("Perderai: {}", names(&diff.removed)));
+        lines.push(format!(
+            "{}: {}",
+            tr("You will lose", "Perderai"),
+            names(&diff.removed)
+        ));
     }
     if !diff.changed.is_empty() {
-        lines.push(format!("Cambieranno: {}", names(&diff.changed)));
+        lines.push(format!(
+            "{}: {}",
+            tr("Will change", "Cambieranno"),
+            names(&diff.changed)
+        ));
     }
     if lines.is_empty() {
-        return "Stesse credenziali del vault attuale.".into();
+        return tr(
+            "Same credentials as the current vault.",
+            "Stesse credenziali del vault attuale.",
+        )
+        .into();
     }
     lines.join("\n")
 }
@@ -553,7 +637,10 @@ fn show_versions(state: &SharedState) {
     if state.cloud.busy.get() {
         show_error(
             &state.window,
-            "Attendi il completamento dell'operazione S3 in corso.",
+            tr(
+                "Wait for the current S3 operation to finish.",
+                "Attendi il completamento dell'operazione S3 in corso.",
+            ),
         );
         return;
     }
@@ -561,7 +648,10 @@ fn show_versions(state: &SharedState) {
     let Some(catalog) = catalog.as_ref() else {
         show_error(
             &state.window,
-            "Sincronizza prima per leggere le versioni S3 disponibili.",
+            tr(
+                "Sync first to load available S3 versions.",
+                "Sincronizza prima per leggere le versioni S3 disponibili.",
+            ),
         );
         return;
     };
@@ -578,22 +668,26 @@ fn show_versions(state: &SharedState) {
         .map(|s| describe(s, heads.contains(&s.id)))
         .collect();
     let dialog = Dialog::builder()
-        .title("Versioni e conflitti S3")
+        .title(tr("S3 versions and conflicts", "Versioni e conflitti S3"))
         .transient_for(&state.window)
         .modal(true)
         .build();
     track_dialog(state, &dialog);
-    dialog.add_button("Annulla", ResponseType::Cancel);
-    dialog.add_button("Usa questa versione", ResponseType::Accept);
+    dialog.add_button(tr("Cancel", "Annulla"), ResponseType::Cancel);
+    dialog.add_button(
+        tr("Use this version", "Usa questa versione"),
+        ResponseType::Accept,
+    );
     let content = dialog.content_area();
     content.set_spacing(12);
     content.set_margin_top(18);
     content.set_margin_bottom(18);
     content.set_margin_start(18);
     content.set_margin_end(18);
-    let explanation = Label::new(Some(
+    let explanation = Label::new(Some(tr(
+        "The chosen version will replace the local credentials. After resolving the conflict, retention of the latest 30 complete copies will resume. Changes from divergent versions are not merged automatically.",
         "La versione scelta sostituirà le credenziali locali. Dopo la risoluzione riprenderà la conservazione delle ultime 30 copie complete. Le modifiche delle versioni divergenti non vengono unite automaticamente.",
-    ));
+    )));
     explanation.set_wrap(true);
     explanation.set_max_width_chars(65);
     content.append(&explanation);
@@ -666,14 +760,20 @@ pub fn show_recover(state: &SharedState, initial: &PasswordEntry) {
     if state.cloud.busy.get() {
         show_error(
             &state.window,
-            "Attendi il completamento dell'operazione S3 in corso.",
+            tr(
+                "Wait for the current S3 operation to finish.",
+                "Attendi il completamento dell'operazione S3 in corso.",
+            ),
         );
         return;
     }
     if state.vault_path.exists() || !Vault::available_backups(&state.vault_path).is_empty() {
         show_error(
             &state.window,
-            "Sblocca il vault locale per sincronizzarlo. Se è danneggiato, conserva una copia dei file locali prima di recuperare da S3.",
+            tr(
+                "Unlock the local vault to sync it. If it is damaged, keep a backup copy of the local files before recovering from S3.",
+                "Sblocca il vault locale per sincronizzarlo. Se è danneggiato, conserva una copia dei file locali prima di recuperare da S3.",
+            ),
         );
         return;
     }
@@ -681,13 +781,13 @@ pub fn show_recover(state: &SharedState, initial: &PasswordEntry) {
         return;
     };
     let dialog = Dialog::builder()
-        .title("Recupera il vault da S3")
+        .title(tr("Recover vault from S3", "Recupera il vault da S3"))
         .transient_for(&state.window)
         .modal(true)
         .build();
     track_dialog(state, &dialog);
-    dialog.add_button("Annulla", ResponseType::Cancel);
-    let recover = dialog.add_button("Recupera", ResponseType::Accept);
+    dialog.add_button(tr("Cancel", "Annulla"), ResponseType::Cancel);
+    let recover = dialog.add_button(tr("Recover", "Recupera"), ResponseType::Accept);
     let content = dialog.content_area();
     content.set_spacing(12);
     content.set_margin_top(18);
@@ -696,7 +796,10 @@ pub fn show_recover(state: &SharedState, initial: &PasswordEntry) {
     content.set_margin_end(18);
     let password = PasswordEntry::new();
     password.set_show_peek_icon(true);
-    password.set_placeholder_text(Some("Password principale del vault"));
+    password.set_placeholder_text(Some(tr(
+        "Vault master password",
+        "Password principale del vault",
+    )));
     let initial_secret = Zeroizing::new(initial.text().to_string());
     initial.set_text("");
     password.set_text(&initial_secret);
@@ -705,9 +808,10 @@ pub fn show_recover(state: &SharedState, initial: &PasswordEntry) {
     let selection = gtk4::DropDown::from_strings(&[]);
     selection.set_visible(false);
     content.append(&selection);
-    let message = Label::new(Some(
+    let message = Label::new(Some(tr(
+        "Encrypted copies from the configured bucket will be downloaded and verified.",
         "Verranno scaricate e verificate le copie cifrate del bucket configurato.",
-    ));
+    )));
     message.set_wrap(true);
     message.set_max_width_chars(60);
     content.append(&message);
@@ -729,7 +833,10 @@ pub fn show_recover(state: &SharedState, initial: &PasswordEntry) {
                 return;
             }
             if password.text().is_empty() {
-                message.set_text("Inserisci la password principale del vault.");
+                message.set_text(tr(
+                    "Enter the vault master password.",
+                    "Inserisci la password principale del vault.",
+                ));
                 return;
             }
             if let Err(error) = state.keyfile.load() {
@@ -753,7 +860,10 @@ pub fn show_recover(state: &SharedState, initial: &PasswordEntry) {
             let config = config.clone();
             recover.set_sensitive(false);
             state.cloud.busy.set(true);
-            message.set_text("Scaricamento delle copie cifrate…");
+            message.set_text(tr(
+                "Downloading encrypted copies…",
+                "Scaricamento delle copie cifrate…",
+            ));
             let weak_dialog = dialog.downgrade();
             let downloaded = downloaded.clone();
             job(
@@ -839,7 +949,10 @@ fn recover_downloaded(
         .is_visible()
         .then(|| selection.selected() as usize);
     dialog.set_sensitive(false);
-    message.set_text("Verifica delle copie cifrate…");
+    message.set_text(tr(
+        "Verifying encrypted copies…",
+        "Verifica delle copie cifrate…",
+    ));
     state.cloud.busy.set(true);
     job(
         move || -> s3::Result<Recovered> {
@@ -898,9 +1011,10 @@ fn recover_downloaded(
                         )));
                         selection.set_selected(0);
                         selection.set_visible(true);
-                        message.set_text(
+                        message.set_text(tr(
+                            "There are divergent versions. Choose which one to recover and press Recover again. After resolution, retention of the latest 30 complete copies will resume.",
                             "Ci sono versioni divergenti. Scegli quella da recuperare e premi di nuovo Recupera. Dopo la risoluzione riprenderà la conservazione delle ultime 30 copie complete.",
-                        );
+                        ));
                     }
                     Ok(Recovered::Done(vault, outcome)) => {
                         password.set_text("");

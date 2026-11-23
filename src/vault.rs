@@ -5,36 +5,80 @@ use crate::security::validate_new_password;
 use crate::storage::{self, SaveOutcome};
 use rand::{RngCore, rngs::OsRng};
 use sekeeper_core::format::{FormatError, VaultKey};
+use sekeeper_core::i18n::tr;
+use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
-use thiserror::Error;
 
 pub const BACKUP_COUNT: usize = 10;
 
-#[derive(Debug, Error)]
+#[derive(Debug)]
 pub enum VaultError {
-    #[error("impossibile determinare la directory home dell'utente")]
     HomeNotFound,
-    #[error("password o file chiave errati, oppure vault danneggiato")]
     InvalidPasswordOrCorrupted,
-    #[error("formato del vault non valido o non supportato: serve un vault v3 con file chiave")]
     InvalidFormat,
-    #[error("il vault o una sua copia di backup esiste già")]
     AlreadyExists,
-    #[error("{0}")]
     WeakPassword(&'static str),
-    #[error("il vault è cambiato su disco: bloccalo e riaprilo prima di modificarlo")]
     ChangedOnDisk,
-    #[error("il vault non esiste")]
     NotFound,
-    #[error("errore durante la derivazione della chiave")]
     KeyDerivation,
-    #[error("errore durante la cifratura del vault")]
     Encryption,
-    #[error("dati del vault non validi")]
     InvalidData,
-    #[error("errore di I/O: {0}")]
-    Io(#[from] io::Error),
+    Io(io::Error),
+}
+
+impl fmt::Display for VaultError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::HomeNotFound => f.write_str(tr(
+                "unable to determine the user's home directory",
+                "impossibile determinare la directory home dell'utente",
+            )),
+            Self::InvalidPasswordOrCorrupted => f.write_str(tr(
+                "wrong password or key file, or corrupted vault",
+                "password o file chiave errati, oppure vault danneggiato",
+            )),
+            Self::InvalidFormat => f.write_str(tr(
+                "invalid or unsupported vault format: a v3 vault with a key file is required",
+                "formato del vault non valido o non supportato: serve un vault v3 con file chiave",
+            )),
+            Self::AlreadyExists => f.write_str(tr(
+                "the vault or one of its backup copies already exists",
+                "il vault o una sua copia di backup esiste già",
+            )),
+            Self::WeakPassword(message) => f.write_str(message),
+            Self::ChangedOnDisk => f.write_str(tr(
+                "the vault changed on disk: lock and reopen it before editing",
+                "il vault è cambiato su disco: bloccalo e riaprilo prima di modificarlo",
+            )),
+            Self::NotFound => f.write_str(tr("the vault does not exist", "il vault non esiste")),
+            Self::KeyDerivation => f.write_str(tr(
+                "error during key derivation",
+                "errore durante la derivazione della chiave",
+            )),
+            Self::Encryption => f.write_str(tr(
+                "error while encrypting the vault",
+                "errore durante la cifratura del vault",
+            )),
+            Self::InvalidData => f.write_str(tr("invalid vault data", "dati del vault non validi")),
+            Self::Io(error) => write!(f, "{}: {error}", tr("I/O error", "errore di I/O")),
+        }
+    }
+}
+
+impl std::error::Error for VaultError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io(error) => Some(error),
+            _ => None,
+        }
+    }
+}
+
+impl From<io::Error> for VaultError {
+    fn from(error: io::Error) -> Self {
+        Self::Io(error)
+    }
 }
 
 impl From<FormatError> for VaultError {
@@ -87,7 +131,7 @@ impl Vault {
             path: path.to_path_buf(),
             key,
             previous_ciphertext: None,
-            device: "Questo PC".into(),
+            device: tr("This PC", "Questo PC").into(),
             sync_active: false,
             data: VaultData::default(),
         };
@@ -117,7 +161,7 @@ impl Vault {
             path: path.to_path_buf(),
             key,
             previous_ciphertext: None,
-            device: "Questo PC".into(),
+            device: tr("This PC", "Questo PC").into(),
             sync_active: false,
             data: VaultData::default(),
         };
@@ -328,7 +372,9 @@ impl Vault {
     }
 
     pub fn encrypted(&self) -> &[u8] {
-        self.previous_ciphertext.as_deref().expect("vault cifrato")
+        self.previous_ciphertext
+            .as_deref()
+            .expect("encrypted vault")
     }
 
     pub fn enable_sync(&mut self, device: &str) -> Result<SaveOutcome, VaultError> {

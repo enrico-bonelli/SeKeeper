@@ -2,7 +2,7 @@
 # Local source files are copied explicitly, without Git or a remote repository.
 pkgname=sekeeper
 pkgver=0.3.1
-pkgrel=1
+pkgrel=2
 pkgdesc='GTK4 password manager with an encrypted vault, key file and optional AWS S3 sync'
 arch=('x86_64')
 license=('MIT')

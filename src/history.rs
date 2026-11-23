@@ -1,4 +1,5 @@
 use crate::storage::{self, SaveOutcome};
+use sekeeper_core::i18n::tr;
 pub use sekeeper_core::limits::{
     MAX_HISTORY_BYTES, MAX_LINEAGE, MAX_SNAPSHOT_BYTES, MAX_VERSIONS, RETAINED_VERSIONS,
     fingerprint, hex, valid_id,
@@ -16,7 +17,10 @@ pub fn read_snapshot(path: &Path) -> io::Result<Vec<u8>> {
 
 pub fn remember(directory: &Path, id: &str, bytes: &[u8]) -> io::Result<()> {
     if !valid_id(id) || bytes.len() as u64 > MAX_SNAPSHOT_BYTES {
-        return Err(io::Error::other("copia del vault non valida"));
+        return Err(io::Error::other(tr(
+            "invalid vault copy",
+            "copia del vault non valida",
+        )));
     }
     let path = directory.join(format!("{id}.sek"));
     match storage::write_atomic(&path, bytes, true) {
@@ -26,9 +30,10 @@ pub fn remember(directory: &Path, id: &str, bytes: &[u8]) -> io::Result<()> {
         }
         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
             if read_snapshot(&path)? != bytes {
-                return Err(io::Error::other(
+                return Err(io::Error::other(tr(
+                    "two different copies have the same identifier",
                     "due copie diverse hanno lo stesso identificativo",
-                ));
+                )));
             }
             // A previous attempt may have installed this file but failed fsync.
             let directory = storage::PrivateDir::open(directory, false)?;
@@ -57,9 +62,10 @@ pub fn load(directory: &Path) -> io::Result<Vec<(String, Vec<u8>)>> {
         let bytes = directory.read(&name, MAX_SNAPSHOT_BYTES)?;
         total += bytes.len();
         if result.len() >= MAX_VERSIONS || total > MAX_HISTORY_BYTES {
-            return Err(io::Error::other(
+            return Err(io::Error::other(tr(
+                "history too large: archive some copies before syncing",
                 "storico troppo grande: archivia alcune copie prima di sincronizzare",
-            ));
+            )));
         }
         result.push((id.to_string(), bytes));
     }

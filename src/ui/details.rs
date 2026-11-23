@@ -67,10 +67,13 @@ impl State {
         image.set_pixel_size(84);
         image.set_opacity(0.55);
         placeholder.append(&image);
-        let hint = Label::new(Some("Seleziona una credenziale"));
+        let hint = Label::new(Some(tr("Select a credential", "Seleziona una credenziale")));
         hint.add_css_class("placeholder-title");
         placeholder.append(&hint);
-        let detail = Label::new(Some("Qui potrai copiarne i dati senza mostrarli."));
+        let detail = Label::new(Some(tr(
+            "Here you can copy its fields without revealing them.",
+            "Qui potrai copiarne i dati senza mostrarli.",
+        )));
         detail.add_css_class("dim-label");
         placeholder.append(&detail);
         root.add_named(&placeholder, Some("empty"));
@@ -100,7 +103,8 @@ impl State {
         card.add_css_class("field-card");
         let username = value_label();
         let (row, actions) = field_row("Username", &username);
-        let copy_username = icon_button("edit-copy-symbolic", "Copia username");
+        let copy_username =
+            icon_button("edit-copy-symbolic", tr("Copy username", "Copia username"));
         actions.append(&copy_username);
         card.append(&row);
 
@@ -110,17 +114,18 @@ impl State {
         let (row, actions) = field_row("Password", &password);
         let reveal = gtk4::ToggleButton::new();
         reveal.set_icon_name("view-reveal-symbolic");
-        reveal.set_tooltip_text(Some("Mostra la password"));
+        reveal.set_tooltip_text(Some(tr("Show password", "Mostra la password")));
         reveal.set_valign(Align::Center);
         reveal.add_css_class("flat");
         actions.append(&reveal);
-        let copy_password = icon_button("edit-copy-symbolic", "Copia password");
+        let copy_password =
+            icon_button("edit-copy-symbolic", tr("Copy password", "Copia password"));
         actions.append(&copy_password);
         card.append(&row);
 
         let address = value_label();
-        let (address_row, actions) = field_row("Indirizzo", &address);
-        let copy_address = icon_button("edit-copy-symbolic", "Copia indirizzo");
+        let (address_row, actions) = field_row(tr("Address", "Indirizzo"), &address);
+        let copy_address = icon_button("edit-copy-symbolic", tr("Copy address", "Copia indirizzo"));
         actions.append(&copy_address);
         card.append(&address_row);
         content.append(&card);
@@ -128,7 +133,7 @@ impl State {
         let notes_card = Box::new(Orientation::Vertical, 4);
         notes_card.add_css_class("field-card");
         notes_card.add_css_class("notes");
-        let caption = Label::new(Some("Note"));
+        let caption = Label::new(Some(tr("Notes", "Note")));
         caption.set_halign(Align::Start);
         caption.add_css_class("field-label");
         notes_card.append(&caption);
@@ -201,15 +206,24 @@ fn connect_copy(
 
 pub fn connect(state: &SharedState) {
     let details = &state.details;
-    connect_copy(state, &details.copy_username, "Username copiato", |c| {
-        &c.username
-    });
-    connect_copy(state, &details.copy_password, "Password copiata", |c| {
-        &c.password
-    });
-    connect_copy(state, &details.copy_address, "Indirizzo copiato", |c| {
-        &c.address
-    });
+    connect_copy(
+        state,
+        &details.copy_username,
+        tr("Username copied", "Username copiato"),
+        |c| &c.username,
+    );
+    connect_copy(
+        state,
+        &details.copy_password,
+        tr("Password copied", "Password copiata"),
+        |c| &c.password,
+    );
+    connect_copy(
+        state,
+        &details.copy_address,
+        tr("Address copied", "Indirizzo copiato"),
+        |c| &c.address,
+    );
     details.reveal.connect_toggled(clone!(
         #[weak]
         state,
@@ -250,8 +264,10 @@ pub fn update(state: &SharedState, credential: Option<&Credential>) {
     details.notes.set_text(&credential.notes);
     details.notes_card.set_visible(!credential.notes.is_empty());
     details.dates.set_text(&format!(
-        "Creata: {}  ·  Modificata: {}",
+        "{}: {}  ·  {}: {}",
+        tr("Created", "Creata"),
         format_timestamp(credential.created_at),
+        tr("Modified", "Modificata"),
         format_timestamp(credential.updated_at)
     ));
     details.root.set_visible_child_name("credential");

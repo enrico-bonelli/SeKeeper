@@ -1,4 +1,5 @@
 use rand::{RngCore, rngs::OsRng};
+use sekeeper_core::i18n::tr;
 use std::ffi::{CStr, CString, OsStr, OsString};
 use std::fs::{self, File, TryLockError};
 use std::io::{self, Read, Write};
@@ -25,7 +26,10 @@ pub fn sibling(path: &Path, suffix: &str) -> PathBuf {
 fn denied() -> io::Error {
     io::Error::new(
         io::ErrorKind::PermissionDenied,
-        "percorso non sicuro: servono directory private e file regolari dell'utente, senza link o permessi per altri utenti",
+        tr(
+            "unsafe path: private directories and regular user-owned files are required, without links or permissions for other users",
+            "percorso non sicuro: servono directory private e file regolari dell'utente, senza link o permessi per altri utenti",
+        ),
     )
 }
 
@@ -157,12 +161,12 @@ impl PrivateDir {
     pub fn read(&self, name: &OsStr, limit: u64) -> io::Result<Vec<u8>> {
         let file = self.regular(name, libc::O_RDONLY)?;
         if file.metadata()?.len() > limit {
-            return Err(io::Error::other("file troppo grande"));
+            return Err(io::Error::other(tr("file too large", "file troppo grande")));
         }
         let mut bytes = Vec::new();
         file.take(limit + 1).read_to_end(&mut bytes)?;
         if bytes.len() as u64 > limit {
-            return Err(io::Error::other("file troppo grande"));
+            return Err(io::Error::other(tr("file too large", "file troppo grande")));
         }
         Ok(bytes)
     }
@@ -263,7 +267,10 @@ pub fn lock(path: &Path) -> io::Result<File> {
         Ok(()) => Ok(file),
         Err(TryLockError::WouldBlock) => Err(io::Error::new(
             io::ErrorKind::WouldBlock,
-            "vault in uso da un'altra operazione; riprova",
+            tr(
+                "vault is in use by another operation; please try again",
+                "vault in uso da un'altra operazione; riprova",
+            ),
         )),
         Err(TryLockError::Error(error)) => Err(error),
     }
@@ -311,7 +318,7 @@ pub fn read_import(path: &Path, limit: u64) -> io::Result<Vec<u8>> {
     let mut bytes = Vec::new();
     file.take(limit + 1).read_to_end(&mut bytes)?;
     if bytes.len() as u64 > limit {
-        return Err(io::Error::other("file troppo grande"));
+        return Err(io::Error::other(tr("file too large", "file troppo grande")));
     }
     Ok(bytes)
 }
@@ -322,14 +329,20 @@ pub fn read_keyfile(path: &Path, bytes: &mut [u8]) -> io::Result<()> {
     if file.metadata()?.len() != bytes.len() as u64 {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            "dimensione del file chiave non valida",
+            tr(
+                "invalid key file size",
+                "dimensione del file chiave non valida",
+            ),
         ));
     }
     file.read_exact(bytes)?;
     if file.read(&mut [0u8; 1])? != 0 {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            "dimensione del file chiave non valida",
+            tr(
+                "invalid key file size",
+                "dimensione del file chiave non valida",
+            ),
         ));
     }
     Ok(())
@@ -443,7 +456,10 @@ fn fail_at(path: &Path, stage: FailureStage) -> io::Result<()> {
             .is_some_and(|(p, s)| p == path && *s == stage)
         {
             *failure = None;
-            Err(io::Error::other("errore di I/O simulato"))
+            Err(io::Error::other(tr(
+                "simulated I/O error",
+                "errore di I/O simulato",
+            )))
         } else {
             Ok(())
         }

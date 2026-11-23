@@ -10,6 +10,7 @@ use gtk4::{
     ScrolledWindow, SearchEntry, SelectionMode, Stack, TextView,
 };
 use gtk4::{gdk, gio, glib};
+use sekeeper_core::i18n::{is_italian, tr};
 use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -58,7 +59,11 @@ fn job<T: Send + 'static, E: std::fmt::Display + Send + 'static>(
     glib::spawn_future_local(async move {
         done(match gio::spawn_blocking(work).await {
             Ok(result) => result.map_err(|error| error.to_string()),
-            Err(_) => Err("operazione interrotta da un errore interno".into()),
+            Err(_) => Err(tr(
+                "operation interrupted by an internal error",
+                "operazione interrotta da un errore interno",
+            )
+            .into()),
         });
     });
 }
@@ -76,7 +81,7 @@ fn build_with_path(
     vault_path: Result<PathBuf, VaultError>,
 ) -> Option<SharedState> {
     gtk4::Window::set_default_icon_name(crate::APP_ID);
-    gtk4::IconTheme::for_display(&gdk::Display::default().expect("display disponibile"))
+    gtk4::IconTheme::for_display(&gdk::Display::default().expect("display available"))
         .add_resource_path("/io/github/sekeeper/Sekeeper/icons/hicolor");
     appearance::initialize();
     let window = ApplicationWindow::builder()
@@ -87,20 +92,29 @@ fn build_with_path(
         .build();
 
     let header = HeaderBar::new();
-    let add_button = Button::with_label("Aggiungi");
+    let add_button = Button::with_label(tr("Add", "Aggiungi"));
     add_button.add_css_class("suggested-action");
     add_button.set_visible(false);
     header.pack_start(&add_button);
     let cloud_button = Button::with_label("S3…");
-    let lock_button = Button::with_label("Blocca");
+    let lock_button = Button::with_label(tr("Lock", "Blocca"));
     lock_button.set_visible(false);
     let menu = gio::Menu::new();
-    menu.append(Some("Importa da CSV…"), Some("win.import"));
-    menu.append(Some("Esporta in CSV…"), Some("win.export"));
-    menu.append(Some("Configura il telefono…"), Some("win.phone-key"));
+    menu.append(
+        Some(tr("Import from CSV…", "Importa da CSV…")),
+        Some("win.import"),
+    );
+    menu.append(
+        Some(tr("Export to CSV…", "Esporta in CSV…")),
+        Some("win.export"),
+    );
+    menu.append(
+        Some(tr("Set up phone…", "Configura il telefono…")),
+        Some("win.phone-key"),
+    );
     let menu_button = gtk4::MenuButton::new();
     menu_button.set_icon_name("open-menu-symbolic");
-    menu_button.set_tooltip_text(Some("Importa ed esporta"));
+    menu_button.set_tooltip_text(Some(tr("Import and export", "Importa ed esporta")));
     menu_button.set_menu_model(Some(&menu));
     menu_button.set_visible(false);
     header.pack_end(&menu_button);
@@ -144,8 +158,8 @@ fn build_with_path(
     auth_page.append(&auth_scroller);
     stack.add_named(&auth_page, Some("auth"));
 
-    let edit_button = Button::with_label("Modifica");
-    let delete_button = Button::with_label("Elimina");
+    let edit_button = Button::with_label(tr("Edit", "Modifica"));
+    let delete_button = Button::with_label(tr("Delete", "Elimina"));
     delete_button.add_css_class("destructive-action");
     edit_button.set_sensitive(false);
     delete_button.set_sensitive(false);
@@ -155,14 +169,20 @@ fn build_with_path(
     sidebar.add_css_class("sidebar");
     sidebar.set_size_request(290, -1);
     let search = SearchEntry::new();
-    search.set_placeholder_text(Some("Cerca per nome, username o indirizzo…"));
+    search.set_placeholder_text(Some(tr(
+        "Search by name, username, or address…",
+        "Cerca per nome, username o indirizzo…",
+    )));
     search.set_hexpand(true);
     sidebar.append(&search);
 
     let credentials = ListBox::new();
     credentials.set_selection_mode(SelectionMode::Single);
     credentials.set_activate_on_single_click(false);
-    let empty_state = Label::new(Some("Nessuna credenziale. Premi Aggiungi per iniziare."));
+    let empty_state = Label::new(Some(tr(
+        "No credentials yet. Press Add to get started.",
+        "Nessuna credenziale. Premi Aggiungi per iniziare.",
+    )));
     empty_state.set_wrap(true);
     empty_state.set_margin_top(24);
     empty_state.set_margin_start(12);
@@ -202,7 +222,10 @@ fn build_with_path(
     cloud.status.set_hexpand(true);
     cloud.status.set_halign(Align::Start);
     status_bar.append(&cloud.status);
-    let lock_hint = Label::new(Some("Blocco automatico dopo 5 minuti di inattività"));
+    let lock_hint = Label::new(Some(tr(
+        "Auto-lock after 5 minutes of inactivity",
+        "Blocco automatico dopo 5 minuti di inattività",
+    )));
     lock_hint.add_css_class("dim-label");
     status_bar.append(&lock_hint);
     root.append(&status_bar);
@@ -391,11 +414,11 @@ fn show_authentication_mode(state: &SharedState, force_create: bool) {
     let recovering =
         !state.vault_path.exists() && backups.is_empty() && state.cloud.enabled() && !creating;
     let title = Label::new(Some(if creating {
-        "Crea il tuo vault"
+        tr("Create your vault", "Crea il tuo vault")
     } else if recovering {
-        "Recupera il tuo vault"
+        tr("Recover your vault", "Recupera il tuo vault")
     } else {
-        "Sblocca Sekeeper"
+        tr("Unlock Sekeeper", "Sblocca Sekeeper")
     }));
     title.add_css_class("auth-title");
     title.set_margin_bottom(8);
@@ -406,11 +429,20 @@ fn show_authentication_mode(state: &SharedState, force_create: bool) {
     state.auth.append(&title);
 
     let explanation = Label::new(Some(if creating {
-        "Scegli una passphrase unica di almeno 15 caratteri e genera o seleziona un file chiave. Serviranno entrambi per aprire il vault e i backup. Conserva il file separatamente e fanne una copia di recupero."
+        tr(
+            "Choose a unique passphrase of at least 15 characters and generate or select a key file. Both are required to open the vault and its backups. Keep the file separately and make a recovery copy.",
+            "Scegli una passphrase unica di almeno 15 caratteri e genera o seleziona un file chiave. Serviranno entrambi per aprire il vault e i backup. Conserva il file separatamente e fanne una copia di recupero.",
+        )
     } else if recovering {
-        "Questo PC non ha ancora un vault locale. Per recuperarlo da S3 servono la password principale e lo stesso file chiave usato sugli altri PC."
+        tr(
+            "This PC does not have a local vault yet. To recover it from S3 you need the master password and the same key file used on your other PCs.",
+            "Questo PC non ha ancora un vault locale. Per recuperarlo da S3 servono la password principale e lo stesso file chiave usato sugli altri PC.",
+        )
     } else {
-        "Inserisci la password principale e seleziona il file chiave per aprire il vault."
+        tr(
+            "Enter the master password and select the key file to open the vault.",
+            "Inserisci la password principale e seleziona il file chiave per aprire il vault.",
+        )
     }));
     explanation.set_wrap(true);
     explanation.set_max_width_chars(46);
@@ -432,7 +464,7 @@ fn show_authentication_mode(state: &SharedState, force_create: bool) {
 
     let confirmation = PasswordEntry::new();
     if creating {
-        let confirmation_label = Label::new(Some("Conferma password"));
+        let confirmation_label = Label::new(Some(tr("Confirm password", "Conferma password")));
         confirmation_label.set_halign(Align::End);
         confirmation.set_show_peek_icon(true);
         form.attach(&confirmation_label, 0, 1, 1, 1);
@@ -459,26 +491,30 @@ fn show_authentication_mode(state: &SharedState, force_create: bool) {
     let spinner = gtk4::Spinner::new();
     progress.append(&spinner);
     progress.append(&Label::new(Some(if creating {
-        "Creazione del vault…"
+        tr("Creating vault…", "Creazione del vault…")
     } else {
-        "Verifica di password e file chiave…"
+        tr(
+            "Verifying password and key file…",
+            "Verifica di password e file chiave…",
+        )
     })));
     progress.set_visible(false);
     state.auth.append(&progress);
 
     let submit = Button::with_label(if creating {
-        "Crea vault"
+        tr("Create vault", "Crea vault")
     } else if recovering {
-        "Recupera da S3…"
+        tr("Recover from S3…", "Recupera da S3…")
     } else {
-        "Sblocca"
+        tr("Unlock", "Sblocca")
     });
     submit.add_css_class("suggested-action");
     submit.add_css_class("primary");
     submit.set_margin_top(18);
     state.auth.append(&submit);
     if recovering {
-        let create = Button::with_label("Crea un nuovo vault vuoto");
+        let create =
+            Button::with_label(tr("Create a new empty vault", "Crea un nuovo vault vuoto"));
         create.add_css_class("flat");
         create.set_margin_top(6);
         state.auth.append(&create);
@@ -489,7 +525,7 @@ fn show_authentication_mode(state: &SharedState, force_create: bool) {
         ));
     }
     if state.cloud.enabled() && !recovering {
-        let recover = Button::with_label("Recupera da S3…");
+        let recover = Button::with_label(tr("Recover from S3…", "Recupera da S3…"));
         recover.add_css_class("flat");
         recover.set_margin_top(6);
         state.auth.append(&recover);
@@ -502,7 +538,10 @@ fn show_authentication_mode(state: &SharedState, force_create: bool) {
         ));
     }
     if !backups.is_empty() {
-        let restore = Button::with_label("Ripristina una copia precedente…");
+        let restore = Button::with_label(tr(
+            "Restore a previous copy…",
+            "Ripristina una copia precedente…",
+        ));
         restore.add_css_class("flat");
         restore.set_margin_top(6);
         state.auth.append(&restore);
@@ -537,7 +576,10 @@ fn show_authentication_mode(state: &SharedState, force_create: bool) {
             }
             let master_password = Zeroizing::new(password.text().to_string());
             if master_password.is_empty() {
-                error.set_text("La password non può essere vuota.");
+                error.set_text(tr(
+                    "Password cannot be empty.",
+                    "La password non può essere vuota.",
+                ));
                 return;
             }
             if creating {
@@ -550,7 +592,7 @@ fn show_authentication_mode(state: &SharedState, force_create: bool) {
                 };
                 let repeated = Zeroizing::new(confirmation.text().to_string());
                 if *master_password != *repeated {
-                    error.set_text("Le password non coincidono.");
+                    error.set_text(tr("Passwords do not match.", "Le password non coincidono."));
                     return;
                 }
             }
@@ -729,16 +771,28 @@ fn refresh_credentials(state: &SharedState) {
         state.credentials.append(&row);
     }
     state.empty_state.set_text(if total == 0 {
-        "Nessuna credenziale. Premi Aggiungi per iniziare."
+        tr(
+            "No credentials yet. Press Add to get started.",
+            "Nessuna credenziale. Premi Aggiungi per iniziare.",
+        )
     } else {
-        "Nessun risultato. Prova un'altra descrizione o cancella la ricerca."
+        tr(
+            "No results. Try another description or clear the search.",
+            "Nessun risultato. Prova un'altra descrizione o cancella la ricerca.",
+        )
     });
     let counter = if state.vault.borrow().is_none() {
         String::new()
     } else if query.trim().is_empty() {
-        format!("{total} credenzial{}", if total == 1 { "e" } else { "i" })
-    } else {
+        if is_italian() {
+            format!("{total} credenzial{}", if total == 1 { "e" } else { "i" })
+        } else {
+            format!("{total} credential{}", if total == 1 { "" } else { "s" })
+        }
+    } else if is_italian() {
         format!("{} di {total} credenziali", entries.len())
+    } else {
+        format!("{} of {total} credentials", entries.len())
     };
     state.counter.set_text(&counter);
     state.edit_button.set_sensitive(false);
@@ -792,12 +846,17 @@ fn set_avatar(avatar: &Label, description: &str, large: bool) {
 }
 
 fn format_timestamp(timestamp: Option<u64>) -> String {
+    let pattern = if is_italian() {
+        "%d/%m/%Y %H:%M:%S"
+    } else {
+        "%Y-%m-%d %H:%M:%S"
+    };
     timestamp
         .and_then(|value| i64::try_from(value).ok())
         .and_then(|value| glib::DateTime::from_unix_local(value).ok())
-        .and_then(|date| date.format("%d/%m/%Y %H:%M:%S").ok())
+        .and_then(|date| date.format(pattern).ok())
         .map(|value| value.to_string())
-        .unwrap_or_else(|| "Non disponibile".into())
+        .unwrap_or_else(|| tr("Unavailable", "Non disponibile").into())
 }
 
 fn show_editor(state: &SharedState, existing: Option<Credential>) {
@@ -807,9 +866,9 @@ fn show_editor(state: &SharedState, existing: Option<Credential>) {
     let editing = existing.is_some();
     let dialog = Dialog::builder()
         .title(if editing {
-            "Modifica credenziale"
+            tr("Edit credential", "Modifica credenziale")
         } else {
-            "Nuova credenziale"
+            tr("New credential", "Nuova credenziale")
         })
         .transient_for(&state.window)
         .modal(true)
@@ -817,8 +876,8 @@ fn show_editor(state: &SharedState, existing: Option<Credential>) {
         .default_height(580)
         .build();
     track_dialog(state, &dialog);
-    dialog.add_button("Annulla", ResponseType::Cancel);
-    let save = dialog.add_button("Salva", ResponseType::Accept);
+    dialog.add_button(tr("Cancel", "Annulla"), ResponseType::Cancel);
+    let save = dialog.add_button(tr("Save", "Salva"), ResponseType::Accept);
     save.add_css_class("suggested-action");
     dialog.set_default_response(ResponseType::Accept);
 
@@ -840,16 +899,22 @@ fn show_editor(state: &SharedState, existing: Option<Credential>) {
         entry.set_hexpand(true);
     }
     password.set_hexpand(true);
-    attach_field(&grid, 0, "Descrizione *", &description);
+    attach_field(&grid, 0, tr("Description *", "Descrizione *"), &description);
     attach_field(&grid, 1, "Username *", &username);
     let password_row = Box::new(Orientation::Horizontal, 6);
     password_row.append(&password);
     let length = gtk4::SpinButton::with_range(8.0, 64.0, 1.0);
     length.set_value(20.0);
-    length.set_tooltip_text(Some("Lunghezza della password generata"));
+    length.set_tooltip_text(Some(tr(
+        "Length of the generated password",
+        "Lunghezza della password generata",
+    )));
     password_row.append(&length);
-    let generate = Button::with_label("Genera");
-    generate.set_tooltip_text(Some("Sostituisce il campo con una password casuale"));
+    let generate = Button::with_label(tr("Generate", "Genera"));
+    generate.set_tooltip_text(Some(tr(
+        "Replaces the field with a random password",
+        "Sostituisce il campo con una password casuale",
+    )));
     generate.connect_clicked(clone!(
         #[weak]
         password,
@@ -863,7 +928,7 @@ fn show_editor(state: &SharedState, existing: Option<Credential>) {
     ));
     password_row.append(&generate);
     attach_field(&grid, 2, "Password *", &password_row);
-    attach_field(&grid, 3, "Indirizzo", &address);
+    attach_field(&grid, 3, tr("Address", "Indirizzo"), &address);
     let created_at = Label::new(Some(&if editing {
         format_timestamp(
             existing
@@ -871,7 +936,7 @@ fn show_editor(state: &SharedState, existing: Option<Credential>) {
                 .and_then(|credential| credential.created_at),
         )
     } else {
-        "Al primo salvataggio".into()
+        tr("On first save", "Al primo salvataggio").into()
     }));
     let updated_at = Label::new(Some(&if editing {
         format_timestamp(
@@ -880,16 +945,21 @@ fn show_editor(state: &SharedState, existing: Option<Credential>) {
                 .and_then(|credential| credential.updated_at),
         )
     } else {
-        "Al primo salvataggio".into()
+        tr("On first save", "Al primo salvataggio").into()
     }));
     for label in [&created_at, &updated_at] {
         label.set_halign(Align::Start);
         label.add_css_class("dim-label");
     }
-    attach_field(&grid, 4, "Creata il", &created_at);
-    attach_field(&grid, 5, "Ultima modifica", &updated_at);
+    attach_field(&grid, 4, tr("Created on", "Creata il"), &created_at);
+    attach_field(
+        &grid,
+        5,
+        tr("Last modified", "Ultima modifica"),
+        &updated_at,
+    );
 
-    let notes_label = Label::new(Some("Note"));
+    let notes_label = Label::new(Some(tr("Notes", "Note")));
     notes_label.set_halign(Align::Start);
     notes_label.set_margin_top(4);
     content.append(&grid);
@@ -955,7 +1025,10 @@ fn show_editor(state: &SharedState, existing: Option<Credential>) {
             let username_text = username.text().trim().to_string();
             let mut password_text = Zeroizing::new(password.text().to_string());
             if description_text.is_empty() || username_text.is_empty() || password_text.is_empty() {
-                error.set_text("Descrizione, username e password sono obbligatori.");
+                error.set_text(tr(
+                    "Description, username, and password are required.",
+                    "Descrizione, username e password sono obbligatori.",
+                ));
                 return;
             }
             let buffer = notes.buffer();
@@ -1018,15 +1091,19 @@ fn confirm_delete(state: &SharedState) {
         gtk4::DialogFlags::MODAL,
         MessageType::Question,
         gtk4::ButtonsType::None,
-        "Eliminare questa credenziale?",
+        tr("Delete this credential?", "Eliminare questa credenziale?"),
     );
     track_dialog(state, &dialog);
-    dialog.set_secondary_text(Some(&format!(
-        "“{}” verrà eliminata definitivamente.",
-        credential.description
-    )));
-    dialog.add_button("Annulla", ResponseType::Cancel);
-    let delete = dialog.add_button("Elimina", ResponseType::Accept);
+    dialog.set_secondary_text(Some(&if is_italian() {
+        format!(
+            "“{}” verrà eliminata definitivamente.",
+            credential.description
+        )
+    } else {
+        format!("“{}” will be permanently deleted.", credential.description)
+    }));
+    dialog.add_button(tr("Cancel", "Annulla"), ResponseType::Cancel);
+    let delete = dialog.add_button(tr("Delete", "Elimina"), ResponseType::Accept);
     delete.add_css_class("destructive-action");
     let id = credential.id.clone();
     drop(credential);
@@ -1061,16 +1138,28 @@ fn show_save_warning(state: &SharedState, outcome: SaveOutcome) {
     if let SaveOutcome::DurabilityUncertain(error) = outcome {
         show_error(
             &state.window,
-            &format!(
-                "Il file contiene le modifiche, ma non è stato possibile garantirne la conservazione in caso di spegnimento improvviso. Non ripetere l'operazione.\n\nDettaglio: {error}"
-            ),
+            &if is_italian() {
+                format!(
+                    "Il file contiene le modifiche, ma non è stato possibile garantirne la conservazione in caso di spegnimento improvviso. Non ripetere l'operazione.\n\nDettaglio: {error}"
+                )
+            } else {
+                format!(
+                    "The file contains your changes, but durability could not be guaranteed in the event of a sudden power loss. Do not repeat the operation.\n\nDetails: {error}"
+                )
+            },
         );
     } else if let SaveOutcome::CloudCopyPending(error) = outcome {
         show_error(
             &state.window,
-            &format!(
-                "Il vault locale è salvato, ma la copia per S3 è in attesa. Riprova la sincronizzazione.\n\n{error}"
-            ),
+            &if is_italian() {
+                format!(
+                    "Il vault locale è salvato, ma la copia per S3 è in attesa. Riprova la sincronizzazione.\n\n{error}"
+                )
+            } else {
+                format!(
+                    "The local vault is saved, but the S3 copy is pending. Try syncing again.\n\n{error}"
+                )
+            },
         );
     }
     cloud::request_sync(state);
@@ -1082,22 +1171,26 @@ fn show_restore(state: &SharedState, password: &PasswordEntry) {
         return;
     }
     let dialog = Dialog::builder()
-        .title("Ripristina una copia precedente")
+        .title(tr(
+            "Restore a previous copy",
+            "Ripristina una copia precedente",
+        ))
         .transient_for(&state.window)
         .modal(true)
         .build();
     track_dialog(state, &dialog);
-    dialog.add_button("Annulla", ResponseType::Cancel);
-    dialog.add_button("Ripristina", ResponseType::Accept);
+    dialog.add_button(tr("Cancel", "Annulla"), ResponseType::Cancel);
+    dialog.add_button(tr("Restore", "Ripristina"), ResponseType::Accept);
     let content = dialog.content_area();
     content.set_spacing(12);
     content.set_margin_top(18);
     content.set_margin_bottom(18);
     content.set_margin_start(18);
     content.set_margin_end(18);
-    let explanation = Label::new(Some(
+    let explanation = Label::new(Some(tr(
+        "Restoring replaces the vault with a previous copy and discards later changes. The current file will be kept separately. You need the master password and key file for the chosen copy.",
         "Il ripristino sostituisce il vault con una copia precedente e annulla le modifiche successive. Il file attuale verrà conservato separatamente. Servono la password principale e il file chiave della copia scelta.",
-    ));
+    )));
     explanation.set_wrap(true);
     explanation.set_max_width_chars(55);
     content.append(&explanation);
@@ -1105,9 +1198,14 @@ fn show_restore(state: &SharedState, password: &PasswordEntry) {
         .iter()
         .map(|slot| {
             format!(
-                "Copia {slot} — {}{}",
+                "{} {slot} — {}{}",
+                tr("Copy", "Copia"),
                 format_timestamp(Vault::backup_modified(&state.vault_path, *slot)),
-                if *slot == 1 { " (più recente)" } else { "" }
+                if *slot == 1 {
+                    tr(" (most recent)", " (più recente)")
+                } else {
+                    ""
+                }
             )
         })
         .collect();
@@ -1117,7 +1215,7 @@ fn show_restore(state: &SharedState, password: &PasswordEntry) {
     let initial_password = Zeroizing::new(password.text().to_string());
     password.set_text("");
     let password = PasswordEntry::new();
-    password.set_placeholder_text(Some("Password principale"));
+    password.set_placeholder_text(Some(tr("Master password", "Password principale")));
     password.set_show_peek_icon(true);
     password.set_text(&initial_password);
     content.append(&password);
@@ -1143,7 +1241,10 @@ fn show_restore(state: &SharedState, password: &PasswordEntry) {
             }
             let secret = Zeroizing::new(password.text().to_string());
             if secret.is_empty() {
-                error.set_text("Inserisci la password principale.");
+                error.set_text(tr(
+                    "Enter the master password.",
+                    "Inserisci la password principale.",
+                ));
                 return;
             }
             let Some(slot) = slots.get(selection.selected() as usize) else {
@@ -1159,7 +1260,7 @@ fn show_restore(state: &SharedState, password: &PasswordEntry) {
             let slot = *slot;
             let path = state.vault_path.clone();
             dialog.set_sensitive(false);
-            error.set_text("Verifica della copia…");
+            error.set_text(tr("Verifying copy…", "Verifica della copia…"));
             job(
                 move || Vault::restore_backup(&path, &secret, slot, &keyfile),
                 clone!(
@@ -1501,7 +1602,7 @@ fn install_css() {
     let provider = gtk4::CssProvider::new();
     provider.load_from_resource("/io/github/sekeeper/Sekeeper/style.css");
     gtk4::style_context_add_provider_for_display(
-        &gdk::Display::default().expect("display disponibile"),
+        &gdk::Display::default().expect("display available"),
         &provider,
         gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
     );

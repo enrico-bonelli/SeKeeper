@@ -1,4 +1,5 @@
 use rand::{Rng, rngs::OsRng};
+use sekeeper_core::i18n::tr;
 use std::io;
 use std::time::{Duration, Instant};
 
@@ -56,9 +57,10 @@ pub fn generate_password(length: usize) -> zeroize::Zeroizing<String> {
 pub fn validate_new_password(password: &str) -> Result<(), &'static str> {
     let characters = zeroize::Zeroizing::new(password.chars().collect::<Vec<char>>());
     if characters.len() < 15 || password.trim().is_empty() {
-        return Err(
+        return Err(tr(
+            "Use at least 15 characters. Prefer 5–6 randomly chosen words and a unique passphrase.",
             "Usa almeno 15 caratteri. Preferisci 5–6 parole scelte a caso e una passphrase unica.",
-        );
+        ));
     }
     // Reject short repeating patterns without imposing character-class rules.
     let repetitive = (1..=4).any(|period| {
@@ -77,9 +79,10 @@ pub fn validate_new_password(password: &str) -> Result<(), &'static str> {
     .iter()
     .any(|common| password.eq_ignore_ascii_case(common));
     if repetitive || common {
-        return Err(
+        return Err(tr(
+            "This password is too predictable. Choose a unique passphrase with random words.",
             "Questa password è troppo prevedibile. Scegli una passphrase unica con parole casuali.",
-        );
+        ));
     }
     Ok(())
 }
@@ -184,5 +187,83 @@ mod tests {
         idle.touch(start + Duration::from_secs(200));
         assert!(!idle.expired(start + IDLE_TIMEOUT));
         assert!(idle.expired(start + Duration::from_secs(200) + IDLE_TIMEOUT));
+    }
+
+    #[test]
+    fn desktop_messages_follow_english_and_italian_locales() {
+        use crate::{s3, vault::VaultError};
+        use sekeeper_core::i18n::{Lang, current_lang, set_lang};
+
+        let previous = current_lang();
+
+        set_lang(Lang::En);
+        assert!(
+            validate_new_password("short")
+                .unwrap_err()
+                .contains("15 characters")
+        );
+        assert!(
+            validate_new_password("aaaaaaaaaaaaaaa")
+                .unwrap_err()
+                .contains("too predictable")
+        );
+        assert_eq!(
+            VaultError::InvalidPasswordOrCorrupted.to_string(),
+            "wrong password or key file, or corrupted vault"
+        );
+        assert_eq!(
+            VaultError::ChangedOnDisk.to_string(),
+            "the vault changed on disk: lock and reopen it before editing"
+        );
+        assert_eq!(s3::Config::default().device, "This PC");
+        assert_eq!(s3::Config::default().prefix, "sekeeper/personal/");
+        assert!(
+            s3::Config::default()
+                .validate()
+                .unwrap_err()
+                .to_string()
+                .contains("invalid S3 bucket name")
+        );
+        assert!(
+            s3::CloudError::Io(io::Error::other("x"))
+                .to_string()
+                .starts_with("local S3 file error: ")
+        );
+
+        set_lang(Lang::It);
+        assert!(
+            validate_new_password("short")
+                .unwrap_err()
+                .contains("15 caratteri")
+        );
+        assert!(
+            validate_new_password("aaaaaaaaaaaaaaa")
+                .unwrap_err()
+                .contains("troppo prevedibile")
+        );
+        assert_eq!(
+            VaultError::InvalidPasswordOrCorrupted.to_string(),
+            "password o file chiave errati, oppure vault danneggiato"
+        );
+        assert_eq!(
+            VaultError::ChangedOnDisk.to_string(),
+            "il vault è cambiato su disco: bloccalo e riaprilo prima di modificarlo"
+        );
+        assert_eq!(s3::Config::default().device, "Questo PC");
+        assert_eq!(s3::Config::default().prefix, "sekeeper/personale/");
+        assert!(
+            s3::Config::default()
+                .validate()
+                .unwrap_err()
+                .to_string()
+                .contains("nome del bucket S3 non valido")
+        );
+        assert!(
+            s3::CloudError::Io(io::Error::other("x"))
+                .to_string()
+                .starts_with("errore nei file locali S3: ")
+        );
+
+        set_lang(previous);
     }
 }

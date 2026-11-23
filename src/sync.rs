@@ -5,6 +5,7 @@ use crate::s3::{CloudError, RemoteStore, Result, error};
 use crate::storage::SaveOutcome;
 use crate::vault::Vault;
 use sekeeper_core::format::VaultKey;
+use sekeeper_core::i18n::{is_italian, tr};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
@@ -12,7 +13,7 @@ pub use sekeeper_core::catalog::{Catalog, CatalogError, Decision, Snapshot, comp
 
 impl From<CatalogError> for CloudError {
     fn from(value: CatalogError) -> Self {
-        CloudError::Message(value.0)
+        CloudError::Message(value.to_string())
     }
 }
 
@@ -44,14 +45,17 @@ pub fn download(
     for attempt in 0..3 {
         let ids: BTreeSet<String> = remote.list()?.into_iter().collect();
         if ids.len() > history::MAX_VERSIONS {
-            return Err(error("troppe copie S3"));
+            return Err(error(tr("too many S3 copies", "troppe copie S3")));
         }
         let mut copies = Vec::new();
         let mut total = 0usize;
         let mut retry = false;
         for id in &ids {
             if !history::valid_id(id) {
-                return Err(error("identificativo S3 non valido"));
+                return Err(error(tr(
+                    "invalid S3 identifier",
+                    "identificativo S3 non valido",
+                )));
             }
             let bytes = match history::read_snapshot(&cache.join(format!("{id}.sek"))) {
                 Ok(bytes) => bytes,
@@ -68,7 +72,10 @@ pub fn download(
                     };
                     // Enforce the total limit before remembering network data.
                     if total + bytes.len() > history::MAX_HISTORY_BYTES {
-                        return Err(error("storico S3 troppo grande"));
+                        return Err(error(tr(
+                            "S3 history too large",
+                            "storico S3 troppo grande",
+                        )));
                     }
                     if authentic(id, &bytes) {
                         history::remember(cache, id, &bytes)?;
@@ -79,7 +86,10 @@ pub fn download(
             };
             total += bytes.len();
             if total > history::MAX_HISTORY_BYTES {
-                return Err(error("storico S3 troppo grande"));
+                return Err(error(tr(
+                    "S3 history too large",
+                    "storico S3 troppo grande",
+                )));
             }
             copies.push((id.clone(), bytes));
         }
@@ -87,9 +97,10 @@ pub fn download(
             return Ok(copies);
         }
     }
-    Err(error(
+    Err(error(tr(
+        "S3 history is changing: retry synchronization",
         "lo storico S3 sta cambiando: riprova la sincronizzazione",
-    ))
+    )))
 }
 
 /// After a failed sync or recovery: drops cached downloads that do not
@@ -110,7 +121,10 @@ pub fn publish(
     let existing: BTreeSet<String> = remote.list()?.into_iter().collect();
     for (id, bytes) in copies {
         if !history::valid_id(id) {
-            return Err(error("identificativo della copia non valido"));
+            return Err(error(tr(
+                "invalid copy identifier",
+                "identificativo della copia non valido",
+            )));
         }
         if !existing.contains(id) {
             history::remember(cache, id, bytes)?;
@@ -157,9 +171,12 @@ impl LocalCatalog for Catalog {
             .data
             .revision
             .as_ref()
-            .ok_or_else(|| error("vault senza versione"))?;
+            .ok_or_else(|| error(tr("vault has no version", "vault senza versione")))?;
         if self.heads[0] != current.id {
-            return Err(error("aggiorna il vault prima della pulizia"));
+            return Err(error(tr(
+                "update the vault before pruning",
+                "aggiorna il vault prima della pulizia",
+            )));
         }
         let before = current.id.clone();
         let links = self
@@ -243,9 +260,10 @@ impl LocalCatalog for Catalog {
             .iter()
             .any(|(id, parents)| id != head && proof.get(id) != Some(parents))
         {
-            return Err(error(
+            return Err(error(tr(
+                "encrypted history must be consolidated before pruning",
                 "cronologia cifrata da consolidare prima della pulizia",
-            ));
+            )));
         }
         Ok(Publication {
             copies: snapshots
@@ -284,10 +302,23 @@ impl Publication {
             // actually reached S3 and has been read back byte for byte. With
             // nothing to remove, an idle sync does not need to download it.
             if !stale.is_empty() && remote.get(id)? != *bytes {
-                return Err(error("verifica della copia S3 fallita: pulizia annullata"));
+                return Err(error(tr(
+                    "S3 copy verification failed: pruning cancelled",
+                    "verifica della copia S3 fallita: pulizia annullata",
+                )));
             }
             for id in stale {
-                remote.delete(id).map_err(|e| error(&format!("copie sincronizzate, pulizia S3 in attesa: {e}. Verifica s3:DeleteObject sul prefisso del vault")))?;
+                remote.delete(id).map_err(|e| {
+                    CloudError::Message(if is_italian() {
+                        format!(
+                            "copie sincronizzate, pulizia S3 in attesa: {e}. Verifica s3:DeleteObject sul prefisso del vault"
+                        )
+                    } else {
+                        format!(
+                            "copies synced, S3 pruning pending: {e}. Check s3:DeleteObject on the vault prefix"
+                        )
+                    })
+                })?;
             }
             // Local pruning happens only after successful remote publication
             // and deletion; failures remain retryable without changing the vault.
@@ -355,7 +386,7 @@ fn reconcile_steps(
         .data
         .revision
         .as_ref()
-        .ok_or_else(|| error("vault senza versione"))?
+        .ok_or_else(|| error(tr("vault has no version", "vault senza versione")))?
         .id
         .clone();
     if current != expected {
@@ -392,7 +423,7 @@ pub fn inspect_recovery(
 ) -> Result<Catalog> {
     let first = copies
         .first()
-        .ok_or_else(|| error("nessuna copia S3 disponibile"))?;
+        .ok_or_else(|| error(tr("no S3 copies available", "nessuna copia S3 disponibile")))?;
     let seed = Vault::from_encrypted(vault_path, first.1.clone(), password, keyfile)?;
     let catalog = Catalog::build(&seed, vault_path, copies.clone()).inspect_err(|_| {
         let _ = evict_unauthentic(cache, &seed);
@@ -416,7 +447,7 @@ pub fn complete_recovery(
     let id = catalog
         .heads
         .get(head)
-        .ok_or_else(|| error("scegli una versione"))?;
+        .ok_or_else(|| error(tr("choose a version", "scegli una versione")))?;
     let bytes = catalog.snapshots[id].bytes.clone();
     let mut vault = Vault::from_encrypted(vault_path, bytes, password, keyfile)?;
     let outcome = if catalog.heads.len() > 1 {

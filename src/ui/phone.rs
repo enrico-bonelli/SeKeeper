@@ -22,14 +22,17 @@ pub struct Keys {
 pub fn confirm(state: &SharedState) {
     let config = state.cloud.active_config();
     let dialog = Dialog::builder()
-        .title("Configura il telefono")
+        .title(tr("Set up phone", "Configura il telefono"))
         .transient_for(&state.window)
         .modal(true)
         .default_width(520)
         .build();
     track_dialog(state, &dialog);
-    dialog.add_button("Annulla", ResponseType::Cancel);
-    let show = dialog.add_button("Mostra il QR code", ResponseType::Accept);
+    dialog.add_button(tr("Cancel", "Annulla"), ResponseType::Cancel);
+    let show = dialog.add_button(
+        tr("Show QR code", "Mostra il QR code"),
+        ResponseType::Accept,
+    );
     show.add_css_class("suggested-action");
     let content = dialog.content_area();
     content.set_spacing(12);
@@ -37,23 +40,42 @@ pub fn confirm(state: &SharedState) {
     content.set_margin_bottom(18);
     content.set_margin_start(20);
     content.set_margin_end(20);
-    let warning = Label::new(Some(&format!(
-        "Il QR code contiene il file chiave{}: chi lo fotografa ottiene tutto tranne la password \
-         principale. Assicurati che nessuno veda lo schermo. Resta visibile per {VISIBLE_SECONDS} \
-         secondi; il supporto con il file chiave deve essere collegato.",
-        if config.is_some() {
-            " e l'accesso al bucket S3"
-        } else {
-            ""
-        }
-    )));
+    let warning = Label::new(Some(&if is_italian() {
+        format!(
+            "Il QR code contiene il file chiave{}: chi lo fotografa ottiene tutto tranne la password \
+             principale. Assicurati che nessuno veda lo schermo. Resta visibile per {VISIBLE_SECONDS} \
+             secondi; il supporto con il file chiave deve essere collegato.",
+            if config.is_some() {
+                " e l'accesso al bucket S3"
+            } else {
+                ""
+            }
+        )
+    } else {
+        format!(
+            "The QR code contains the key file{}: anyone who photographs it gets everything except \
+             the master password. Make sure nobody can see your screen. It remains visible for \
+             {VISIBLE_SECONDS} seconds; the device holding the key file must be connected.",
+            if config.is_some() {
+                " and access to the S3 bucket"
+            } else {
+                ""
+            }
+        )
+    }));
     warning.set_wrap(true);
     warning.set_max_width_chars(60);
     content.append(&warning);
 
-    let include = gtk4::CheckButton::with_label("Includi le chiavi AWS di questo PC");
+    let include = gtk4::CheckButton::with_label(tr(
+        "Include this PC's AWS keys",
+        "Includi le chiavi AWS di questo PC",
+    ));
     let access = Entry::new();
-    access.set_placeholder_text(Some("Access Key ID dedicata al telefono"));
+    access.set_placeholder_text(Some(tr(
+        "Dedicated Access Key ID for the phone",
+        "Access Key ID dedicata al telefono",
+    )));
     let secret = PasswordEntry::new();
     secret.set_show_peek_icon(true);
     if let Some(config) = &config {
@@ -66,12 +88,16 @@ pub fn confirm(state: &SharedState) {
         content.append(&destination);
         include.set_active(true);
         content.append(&include);
-        let expander = gtk4::Expander::new(Some("Usa invece chiavi dedicate al telefono"));
+        let expander = gtk4::Expander::new(Some(tr(
+            "Use dedicated keys for the phone instead",
+            "Usa invece chiavi dedicate al telefono",
+        )));
         let fields = Box::new(Orientation::Vertical, 6);
         fields.set_margin_top(6);
-        let hint = Label::new(Some(
+        let hint = Label::new(Some(tr(
+            "Dedicated keys let you revoke only the phone if you lose it.",
             "Chiavi dedicate permettono di revocare solo il telefono se lo perdi.",
-        ));
+        )));
         hint.set_wrap(true);
         hint.set_halign(Align::Start);
         hint.add_css_class("dim-label");
@@ -115,7 +141,10 @@ pub fn confirm(state: &SharedState) {
             };
             if !dedicated.access.is_empty() || !dedicated.secret.is_empty() {
                 if dedicated.access.is_empty() || dedicated.secret.is_empty() {
-                    message.set_text("Inserisci sia l'Access Key ID sia la Secret Access Key.");
+                    message.set_text(tr(
+                        "Enter both the Access Key ID and the Secret Access Key.",
+                        "Inserisci sia l'Access Key ID sia la Secret Access Key.",
+                    ));
                     return;
                 }
                 dialog.close();
@@ -129,7 +158,10 @@ pub fn confirm(state: &SharedState) {
             }
             // The keyring may ask to be unlocked: never block the window.
             dialog.set_sensitive(false);
-            message.set_text("Lettura delle chiavi dal portachiavi…");
+            message.set_text(tr(
+                "Reading keys from the keyring…",
+                "Lettura delle chiavi dal portachiavi…",
+            ));
             let lookup = config.clone();
             job(
                 move || s3::Credentials::load(&lookup),
@@ -144,10 +176,12 @@ pub fn confirm(state: &SharedState) {
                         dialog.set_sensitive(true);
                         match result {
                             Ok(credentials) if !credentials.session_token.is_empty() => {
-                                message.set_text(
+                                message.set_text(tr(
+                                    "This PC uses temporary keys with a session token: they cannot \
+                                     be transferred. Use dedicated keys for the phone.",
                                     "Questo PC usa chiavi temporanee con session token: non possono \
                                      essere trasferite. Usa chiavi dedicate al telefono.",
-                                );
+                                ));
                             }
                             Ok(credentials) => {
                                 dialog.close();
@@ -182,7 +216,10 @@ pub(super) fn transfer(state: &SharedState, config: Option<s3::Config>, keys: Op
     let (text, note) = match &config {
         None => (
             KeyFile::transfer_text(file.as_slice()).map_err(|e| e.to_string()),
-            "Contiene il file chiave. Configura S3 sul telefono.",
+            tr(
+                "Contains the key file. Set up S3 on the phone.",
+                "Contiene il file chiave. Configura S3 sul telefono.",
+            ),
         ),
         Some(config) => {
             let (access, secret) = keys.as_ref().map_or(("", ""), |keys| {
@@ -200,9 +237,15 @@ pub(super) fn transfer(state: &SharedState, config: Option<s3::Config>, keys: Op
                 .map(|setup| setup.to_text())
                 .map_err(|e| e.to_string()),
                 if keys.is_some() {
-                    "Contiene il file chiave, il bucket e le chiavi AWS."
+                    tr(
+                        "Contains the key file, bucket, and AWS keys.",
+                        "Contiene il file chiave, il bucket e le chiavi AWS.",
+                    )
                 } else {
-                    "Contiene il file chiave e il bucket. Inserisci le chiavi AWS sul telefono."
+                    tr(
+                        "Contains the key file and bucket. Enter the AWS keys on the phone.",
+                        "Contiene il file chiave e il bucket. Inserisci le chiavi AWS sul telefono.",
+                    )
                 },
             )
         }
@@ -220,8 +263,14 @@ struct Matrix {
 }
 
 fn matrix(text: &str) -> Result<Matrix, String> {
-    let code = QrCode::with_error_correction_level(text.as_bytes(), EcLevel::M)
-        .map_err(|error| format!("Impossibile creare il QR code: {error}"))?;
+    let code =
+        QrCode::with_error_correction_level(text.as_bytes(), EcLevel::M).map_err(|error| {
+            if is_italian() {
+                format!("Impossibile creare il QR code: {error}")
+            } else {
+                format!("Unable to create QR code: {error}")
+            }
+        })?;
     let width = code.width();
     let size = width + 2 * QUIET_ZONE;
     let mut dark = Zeroizing::new(vec![0u8; size * size]);
@@ -234,23 +283,39 @@ fn matrix(text: &str) -> Result<Matrix, String> {
     Ok(Matrix { size, dark })
 }
 
+fn closing_in(seconds: u32) -> String {
+    if is_italian() {
+        if seconds == 1 {
+            "Si chiude tra 1 secondo".into()
+        } else {
+            format!("Si chiude tra {seconds} secondi")
+        }
+    } else if seconds == 1 {
+        "Closes in 1 second".into()
+    } else {
+        format!("Closes in {seconds} seconds")
+    }
+}
+
 fn show(state: &SharedState, matrix: Matrix, note: &str) {
     let dialog = Dialog::builder()
-        .title("Configurazione per il telefono")
+        .title(tr("Phone setup", "Configurazione per il telefono"))
         .transient_for(&state.window)
         .modal(true)
         .build();
     track_dialog(state, &dialog);
-    dialog.add_button("Chiudi", ResponseType::Close);
+    dialog.add_button(tr("Close", "Chiudi"), ResponseType::Close);
     let content = dialog.content_area();
     content.set_spacing(14);
     content.set_margin_top(20);
     content.set_margin_bottom(20);
     content.set_margin_start(24);
     content.set_margin_end(24);
-    let explanation = Label::new(Some(&format!(
-        "In Sekeeper per Android scegli «Inquadra il QR dal PC». {note}"
-    )));
+    let explanation = Label::new(Some(&if is_italian() {
+        format!("In Sekeeper per Android scegli «Inquadra il QR dal PC». {note}")
+    } else {
+        format!("In Sekeeper for Android, choose “Scan QR from PC”. {note}")
+    }));
     explanation.set_wrap(true);
     explanation.set_max_width_chars(46);
     content.append(&explanation);
@@ -287,7 +352,7 @@ fn show(state: &SharedState, matrix: Matrix, note: &str) {
     countdown.add_css_class("dim-label");
     content.append(&countdown);
     let remaining = Rc::new(Cell::new(VISIBLE_SECONDS));
-    countdown.set_text(&format!("Si chiude tra {VISIBLE_SECONDS} secondi"));
+    countdown.set_text(&closing_in(VISIBLE_SECONDS));
     let timer = glib::timeout_add_seconds_local(
         1,
         clone!(
@@ -304,7 +369,7 @@ fn show(state: &SharedState, matrix: Matrix, note: &str) {
                     dialog.close();
                     return glib::ControlFlow::Break;
                 }
-                countdown.set_text(&format!("Si chiude tra {left} secondi"));
+                countdown.set_text(&closing_in(left));
                 glib::ControlFlow::Continue
             }
         ),

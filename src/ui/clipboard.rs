@@ -19,7 +19,13 @@ pub fn copy(state: &SharedState, text: &str, what: &str) {
         gdk::ContentProvider::for_bytes(HISTORY_HINT, &glib::Bytes::from_static(b"secret")),
     ]);
     if clipboard(state).set_content(Some(&provider)).is_err() {
-        show_error(&state.window, "Impossibile usare gli appunti del desktop.");
+        show_error(
+            &state.window,
+            tr(
+                "Unable to access the desktop clipboard.",
+                "Impossibile usare gli appunti del desktop.",
+            ),
+        );
         return;
     }
     if let Some(timer) = state.clipboard.timer.borrow_mut().take() {
@@ -39,7 +45,11 @@ pub fn copy(state: &SharedState, text: &str, what: &str) {
     *state.clipboard.timer.borrow_mut() = Some(timer);
     toast(
         state,
-        &format!("{what}: gli appunti si svuotano tra {CLEAR_AFTER_SECONDS} secondi"),
+        &if is_italian() {
+            format!("{what}: gli appunti si svuotano tra {CLEAR_AFTER_SECONDS} secondi")
+        } else {
+            format!("{what}: clipboard will clear in {CLEAR_AFTER_SECONDS} seconds")
+        },
     );
 }
 

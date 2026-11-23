@@ -24,13 +24,20 @@ impl State {
 
     pub fn load(&self) -> io::Result<KeyFile> {
         let path = self.path.borrow();
-        let path = path
-            .as_ref()
-            .ok_or_else(|| io::Error::other("Seleziona il file chiave del vault."))?;
+        let path = path.as_ref().ok_or_else(|| {
+            io::Error::other(tr(
+                "Select the vault key file.",
+                "Seleziona il file chiave del vault.",
+            ))
+        })?;
         KeyFile::read(path).map_err(|error| {
             io::Error::new(
                 error.kind(),
-                format!("Impossibile leggere il file chiave: {error}"),
+                if is_italian() {
+                    format!("Impossibile leggere il file chiave: {error}")
+                } else {
+                    format!("Unable to read the key file: {error}")
+                },
             )
         })
     }
@@ -39,14 +46,19 @@ impl State {
     pub fn load_file(&self) -> io::Result<Zeroizing<[u8; sekeeper_core::keyfile::FILE_LEN]>> {
         let path = self.path.borrow();
         let path = path.as_ref().ok_or_else(|| {
-            io::Error::other(
+            io::Error::other(tr(
+                "Select the vault key file first: connect the device that stores it.",
                 "Seleziona prima il file chiave del vault: collega il supporto che lo contiene.",
-            )
+            ))
         })?;
         KeyFile::read_file(path).map_err(|error| {
             io::Error::new(
                 error.kind(),
-                format!("Impossibile leggere il file chiave: collega il supporto che lo contiene. {error}"),
+                if is_italian() {
+                    format!("Impossibile leggere il file chiave: collega il supporto che lo contiene. {error}")
+                } else {
+                    format!("Unable to read the key file: connect the device that stores it. {error}")
+                },
             )
         })
     }
@@ -70,7 +82,9 @@ impl State {
                 .as_ref()
                 .and_then(|path| path.file_name())
                 .map(|name| name.to_string_lossy().into_owned())
-                .unwrap_or_else(|| "Nessun file chiave selezionato".into()),
+                .unwrap_or_else(|| {
+                    tr("No key file selected", "Nessun file chiave selezionato").into()
+                }),
         );
         label.set_tooltip_text(path.as_ref().and_then(|path| path.to_str()));
     }
@@ -90,7 +104,11 @@ pub fn remember(state: &SharedState) {
         Ok(_) => keyfile.saved.set(wanted),
         Err(error) => toast(
             state,
-            &format!("Impossibile ricordare il percorso del file chiave: {error}"),
+            &if is_italian() {
+                format!("Impossibile ricordare il percorso del file chiave: {error}")
+            } else {
+                format!("Unable to remember the key file path: {error}")
+            },
         ),
     }
 }
@@ -98,7 +116,7 @@ pub fn remember(state: &SharedState) {
 pub fn controls(state: &SharedState, parent: &impl IsA<gtk4::Window>, creating: bool) -> Box {
     let content = Box::new(Orientation::Vertical, 6);
     let buttons = Box::new(Orientation::Horizontal, 8);
-    let select = Button::with_label("Scegli file chiave…");
+    let select = Button::with_label(tr("Choose key file…", "Scegli file chiave…"));
     buttons.append(&select);
     content.append(&buttons);
     let name = Label::new(None);
@@ -113,10 +131,14 @@ pub fn controls(state: &SharedState, parent: &impl IsA<gtk4::Window>, creating: 
         labels.push(name.downgrade());
     }
     content.append(&name);
-    let remember = gtk4::CheckButton::with_label("Ricorda il percorso su questo PC");
-    remember.set_tooltip_text(Some(
-        "Salva solo la posizione del file, mai il suo contenuto",
+    let remember = gtk4::CheckButton::with_label(tr(
+        "Remember path on this PC",
+        "Ricorda il percorso su questo PC",
     ));
+    remember.set_tooltip_text(Some(tr(
+        "Saves only the file location, never its contents",
+        "Salva solo la posizione del file, mai il suo contenuto",
+    )));
     remember.set_active(state.keyfile.remember.get());
     remember.connect_toggled(clone!(
         #[weak]
@@ -134,7 +156,7 @@ pub fn controls(state: &SharedState, parent: &impl IsA<gtk4::Window>, creating: 
         move |_| choose(&state, &parent, false)
     ));
     if creating {
-        let generate = Button::with_label("Genera file chiave…");
+        let generate = Button::with_label(tr("Generate key file…", "Genera file chiave…"));
         buttons.append(&generate);
         generate.connect_clicked(clone!(
             #[weak]
@@ -152,9 +174,12 @@ fn choose(state: &SharedState, parent: &gtk4::Window, generate: bool) {
     // buttons into silent no-ops. GTK owns toplevel windows until destruction.
     let chooser = FileChooserDialog::new(
         Some(if generate {
-            "Genera un nuovo file chiave"
+            tr("Generate a new key file", "Genera un nuovo file chiave")
         } else {
-            "Seleziona il file chiave del vault"
+            tr(
+                "Select the vault key file",
+                "Seleziona il file chiave del vault",
+            )
         }),
         Some(parent),
         if generate {
@@ -163,9 +188,13 @@ fn choose(state: &SharedState, parent: &gtk4::Window, generate: bool) {
             FileChooserAction::Open
         },
         &[
-            ("Annulla", ResponseType::Cancel),
+            (tr("Cancel", "Annulla"), ResponseType::Cancel),
             (
-                if generate { "Genera" } else { "Seleziona" },
+                if generate {
+                    tr("Generate", "Genera")
+                } else {
+                    tr("Select", "Seleziona")
+                },
                 ResponseType::Accept,
             ),
         ],
@@ -179,15 +208,33 @@ fn choose(state: &SharedState, parent: &gtk4::Window, generate: bool) {
         chooser.set_current_name("sekeeper.key");
     }
     chooser.connect_response(clone!(
-        #[weak] state,
+        #[weak]
+        state,
         move |chooser, response| {
             if response == ResponseType::Accept {
                 let result = (|| -> io::Result<(PathBuf, Option<SaveOutcome>)> {
-                    let path = chooser.file().and_then(|file| file.path()).ok_or_else(|| io::Error::other("Seleziona un file locale; monta prima il supporto che lo contiene."))?;
-                    if generate && state.vault_path.parent().is_some_and(|parent| path.starts_with(parent)) {
-                        return Err(io::Error::other("Salva il file chiave fuori dalla cartella del vault, per conservarlo separatamente."));
+                    let path = chooser.file().and_then(|file| file.path()).ok_or_else(|| {
+                        io::Error::other(tr(
+                            "Select a local file; mount the device that stores it first.",
+                            "Seleziona un file locale; monta prima il supporto che lo contiene.",
+                        ))
+                    })?;
+                    if generate
+                        && state
+                            .vault_path
+                            .parent()
+                            .is_some_and(|parent| path.starts_with(parent))
+                    {
+                        return Err(io::Error::other(tr(
+                            "Save the key file outside the vault folder so it is stored separately.",
+                            "Salva il file chiave fuori dalla cartella del vault, per conservarlo separatamente.",
+                        )));
                     }
-                    let outcome = if generate { Some(KeyFile::generate(&path)?) } else { None };
+                    let outcome = if generate {
+                        Some(KeyFile::generate(&path)?)
+                    } else {
+                        None
+                    };
                     KeyFile::read(&path)?;
                     Ok((path, outcome))
                 })();
@@ -195,7 +242,18 @@ fn choose(state: &SharedState, parent: &gtk4::Window, generate: bool) {
                     Ok((path, outcome)) => {
                         state.keyfile.select(path);
                         if let Some(SaveOutcome::DurabilityUncertain(error)) = outcome {
-                            show_error(&state.window, &format!("Il file chiave è stato creato, ma la conservazione sul supporto non è confermata. Verifica e conserva una copia prima di usarlo.\n\n{error}"));
+                            show_error(
+                                &state.window,
+                                &if is_italian() {
+                                    format!(
+                                        "Il file chiave è stato creato, ma la conservazione sul supporto non è confermata. Verifica e conserva una copia prima di usarlo.\n\n{error}"
+                                    )
+                                } else {
+                                    format!(
+                                        "The key file was created, but durability on the storage device is not confirmed. Verify it and keep a backup copy before using it.\n\n{error}"
+                                    )
+                                },
+                            );
                         }
                     }
                     Err(error) => {

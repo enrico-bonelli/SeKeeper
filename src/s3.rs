@@ -1,19 +1,45 @@
 use crate::{helpers, history, storage};
+use sekeeper_core::i18n::{is_italian, tr};
 use serde::{Deserialize, Serialize};
-use std::fmt::Write as _;
+use std::fmt::{self, Write as _};
 use std::io::{Read as _, Write as _};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::{Duration, Instant};
-use thiserror::Error;
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
-#[derive(Debug, Error)]
+#[derive(Debug)]
 pub enum CloudError {
-    #[error("{0}")]
     Message(String),
-    #[error("errore nei file locali S3: {0}")]
-    Io(#[from] std::io::Error),
+    Io(std::io::Error),
+}
+
+impl fmt::Display for CloudError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Message(message) => f.write_str(message),
+            Self::Io(error) => write!(
+                f,
+                "{}: {error}",
+                tr("local S3 file error", "errore nei file locali S3")
+            ),
+        }
+    }
+}
+
+impl std::error::Error for CloudError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io(error) => Some(error),
+            Self::Message(_) => None,
+        }
+    }
+}
+
+impl From<std::io::Error> for CloudError {
+    fn from(error: std::io::Error) -> Self {
+        Self::Io(error)
+    }
 }
 pub type Result<T> = std::result::Result<T, CloudError>;
 pub fn error(message: &str) -> CloudError {
@@ -36,8 +62,8 @@ impl Default for Config {
             enabled: true,
             bucket: String::new(),
             region: "eu-central-1".into(),
-            prefix: "sekeeper/personale/".into(),
-            device: "Questo PC".into(),
+            prefix: tr("sekeeper/personal/", "sekeeper/personale/").into(),
+            device: tr("This PC", "Questo PC").into(),
             credential_id: format!("{:032x}", rand::random::<u128>()),
         }
     }
@@ -55,7 +81,10 @@ impl Config {
                 .split('.')
                 .any(|part| part.is_empty() || part.starts_with('-') || part.ends_with('-'))
         {
-            return Err(error("nome del bucket S3 non valido"));
+            return Err(error(tr(
+                "invalid S3 bucket name",
+                "nome del bucket S3 non valido",
+            )));
         }
         if self.region.len() > 32
             || self.region.split('-').count() < 3
@@ -64,7 +93,10 @@ impl Config {
                 .bytes()
                 .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
         {
-            return Err(error("regione AWS non valida, per esempio eu-central-1"));
+            return Err(error(tr(
+                "invalid AWS region, for example eu-central-1",
+                "regione AWS non valida, per esempio eu-central-1",
+            )));
         }
         if self.prefix.is_empty()
             || self.prefix.len() > 256
@@ -79,17 +111,19 @@ impl Config {
                 .bytes()
                 .all(|b| b.is_ascii_alphanumeric() || b"/-_.".contains(&b))
         {
-            return Err(error(
+            return Err(error(tr(
+                "invalid prefix: use letters, numbers, /, -, _ and . and end with /",
                 "prefisso non valido: usa lettere, numeri, /, -, _ e . e termina con /",
-            ));
+            )));
         }
         if self.device.is_empty()
             || self.device.len() > 128
             || !history::valid_id(&self.credential_id)
         {
-            return Err(error(
+            return Err(error(tr(
+                "invalid PC name or credential identifier",
                 "nome del PC o identificativo delle credenziali non valido",
-            ));
+            )));
         }
         Ok(())
     }
@@ -102,15 +136,23 @@ impl Config {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(e) => return Err(e.into()),
         };
-        let config: Self =
-            serde_json::from_slice(&bytes).map_err(|_| error("configurazione S3 non valida"))?;
+        let config: Self = serde_json::from_slice(&bytes).map_err(|_| {
+            error(tr(
+                "invalid S3 configuration",
+                "configurazione S3 non valida",
+            ))
+        })?;
         config.validate()?;
         Ok(Some(config))
     }
     pub fn save(&self, vault: &Path) -> Result<storage::SaveOutcome> {
         self.validate()?;
-        let bytes =
-            serde_json::to_vec_pretty(self).map_err(|_| error("configurazione S3 non valida"))?;
+        let bytes = serde_json::to_vec_pretty(self).map_err(|_| {
+            error(tr(
+                "invalid S3 configuration",
+                "configurazione S3 non valida",
+            ))
+        })?;
         Ok(storage::write_atomic(&Self::path(vault), &bytes, false)?)
     }
     pub fn remote_prefix(&self) -> String {
@@ -142,14 +184,19 @@ impl Credentials {
                 .chain(self.session_token.bytes())
                 .any(|b| !(0x21..=0x7e).contains(&b))
         {
-            return Err(error("credenziali AWS non valide"));
+            return Err(error(tr(
+                "invalid AWS credentials",
+                "credenziali AWS non valide",
+            )));
         }
         Ok(())
     }
     pub fn store(&self, config: &Config) -> Result<()> {
         self.validate()?;
-        let bytes =
-            Zeroizing::new(serde_json::to_vec(self).map_err(|_| error("credenziali non valide"))?);
+        let bytes = Zeroizing::new(
+            serde_json::to_vec(self)
+                .map_err(|_| error(tr("invalid credentials", "credenziali non valide")))?,
+        );
         let mut command = helpers::command(helpers::Program::SecretTool)?;
         let mut child = command
             .args([
@@ -165,17 +212,21 @@ impl Credentials {
             .stderr(Stdio::null())
             .spawn()
             .map_err(|_| {
-                error("installa secret-tool (libsecret) per salvare le credenziali nel portachiavi")
+                error(tr(
+                    "install secret-tool (libsecret) to store credentials in the keyring",
+                    "installa secret-tool (libsecret) per salvare le credenziali nel portachiavi",
+                ))
             })?;
         child
             .stdin
             .take()
-            .ok_or_else(|| error("portachiavi non disponibile"))?
+            .ok_or_else(|| error(tr("keyring unavailable", "portachiavi non disponibile")))?
             .write_all(&bytes)?;
         if !child.wait()?.success() {
-            return Err(error(
+            return Err(error(tr(
+                "unable to save to the desktop keyring: make sure it is unlocked",
                 "impossibile salvare nel portachiavi del desktop: verifica che sia sbloccato",
-            ));
+            )));
         }
         Ok(())
     }
@@ -195,9 +246,17 @@ impl Credentials {
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status()
-            .map_err(|_| error("secret-tool non disponibile: installa libsecret"))?;
+            .map_err(|_| {
+                error(tr(
+                    "secret-tool unavailable: install libsecret",
+                    "secret-tool non disponibile: installa libsecret",
+                ))
+            })?;
         if !status.success() {
-            return Err(error("impossibile rimuovere le vecchie credenziali S3"));
+            return Err(error(tr(
+                "unable to remove old S3 credentials",
+                "impossibile rimuovere le vecchie credenziali S3",
+            )));
         }
         Ok(())
     }
@@ -214,15 +273,25 @@ impl Credentials {
             .stdin(Stdio::null())
             .stderr(Stdio::null())
             .output()
-            .map_err(|_| error("secret-tool non disponibile: installa libsecret"))?;
+            .map_err(|_| {
+                error(tr(
+                    "secret-tool unavailable: install libsecret",
+                    "secret-tool non disponibile: installa libsecret",
+                ))
+            })?;
         let bytes = Zeroizing::new(output.stdout);
         if !output.status.success() {
-            return Err(error(
+            return Err(error(tr(
+                "S3 credentials unavailable: open S3 settings and enter them again",
                 "credenziali S3 non disponibili: apri le impostazioni S3 e inseriscile nuovamente",
-            ));
+            )));
         }
-        let credentials: Self = serde_json::from_slice(&bytes)
-            .map_err(|_| error("credenziali S3 non valide nel portachiavi"))?;
+        let credentials: Self = serde_json::from_slice(&bytes).map_err(|_| {
+            error(tr(
+                "invalid S3 credentials in the keyring",
+                "credenziali S3 non valide nel portachiavi",
+            ))
+        })?;
         credentials.validate()?;
         Ok(credentials)
     }
@@ -299,9 +368,10 @@ impl S3 {
             .as_secs()
             .min(20);
         if remaining == 0 {
-            return Err(error(
+            return Err(error(tr(
+                "sync timed out; local copies remain available",
                 "tempo di sincronizzazione esaurito; le copie locali restano disponibili",
-            ));
+            )));
         }
         // Secrets are passed through a pipe, never argv, environment or a config file.
         let mut config = Zeroizing::new(String::new());
@@ -361,7 +431,10 @@ impl S3 {
             .stderr(Stdio::null())
             .spawn()
             .map_err(|_| {
-                error("curl non disponibile: serve curl 7.75 o successivo con supporto AWS SigV4")
+                error(tr(
+                    "curl unavailable: curl 7.75 or later with AWS SigV4 support is required",
+                    "curl non disponibile: serve curl 7.75 o successivo con supporto AWS SigV4",
+                ))
             })?;
         // Every exit path reaps curl: a failed write or an oversized answer
         // must not leave a zombie or a transfer running in the background.
@@ -375,31 +448,47 @@ impl S3 {
             None => Err(std::io::ErrorKind::BrokenPipe.into()),
         };
         if written.is_err() {
-            return Err(stop(&mut child, "impossibile avviare curl"));
+            return Err(stop(
+                &mut child,
+                tr("unable to start curl", "impossibile avviare curl"),
+            ));
         }
         // Old curl ignores --max-filesize on chunked answers: read at most one
         // copy plus the status line, instead of buffering whatever arrives.
         let limit = history::MAX_SNAPSHOT_BYTES + 4;
         let mut bytes = Vec::new();
         let Some(stdout) = child.stdout.take() else {
-            return Err(stop(&mut child, "impossibile avviare curl"));
+            return Err(stop(
+                &mut child,
+                tr("unable to start curl", "impossibile avviare curl"),
+            ));
         };
         if stdout.take(limit + 1).read_to_end(&mut bytes).is_err() {
-            return Err(stop(&mut child, "risposta S3 non leggibile"));
+            return Err(stop(
+                &mut child,
+                tr("unreadable S3 response", "risposta S3 non leggibile"),
+            ));
         }
         if bytes.len() as u64 > limit {
-            return Err(stop(&mut child, "risposta S3 troppo grande"));
+            return Err(stop(
+                &mut child,
+                tr("S3 response too large", "risposta S3 troppo grande"),
+            ));
         }
         if !child.wait()?.success() {
-            return Err(error(
+            return Err(error(tr(
+                "S3 connection failed: check network, curl, and configuration; will retry later",
                 "connessione S3 non riuscita: verifica rete, curl e configurazione; riproverò più tardi",
-            ));
+            )));
         }
         parse_response(bytes)
     }
     fn key(&self, id: &str) -> Result<String> {
         if !history::valid_id(id) {
-            return Err(error("identificativo della copia S3 non valido"));
+            return Err(error(tr(
+                "invalid S3 copy identifier",
+                "identificativo della copia S3 non valido",
+            )));
         }
         Ok(format!("{}{id}.sek", self.config.remote_prefix()))
     }
@@ -434,13 +523,17 @@ impl RemoteStore for S3 {
                     continue;
                 };
                 if !history::valid_id(name) || entry.size > history::MAX_SNAPSHOT_BYTES {
-                    return Err(error("copia S3 non valida o troppo grande"));
+                    return Err(error(tr(
+                        "invalid or oversized S3 copy",
+                        "copia S3 non valida o troppo grande",
+                    )));
                 }
                 ids.push(name.to_string());
                 if ids.len() > history::MAX_VERSIONS {
-                    return Err(error(
+                    return Err(error(tr(
+                        "too many S3 versions: archive the history before continuing",
                         "troppe versioni S3: archivia lo storico prima di continuare",
-                    ));
+                    )));
                 }
             }
             if !listing.is_truncated {
@@ -449,13 +542,16 @@ impl RemoteStore for S3 {
             let next = listing
                 .next_token
                 .filter(|s| !s.is_empty())
-                .ok_or_else(|| error("elenco S3 incompleto"))?;
+                .ok_or_else(|| error(tr("incomplete S3 listing", "elenco S3 incompleto")))?;
             // Empty pages with fresh tokens would otherwise go on until the deadline.
             if seen_tokens.len() >= MAX_LIST_PAGES {
-                return Err(error("elenco S3 troppo lungo"));
+                return Err(error(tr("S3 listing too long", "elenco S3 troppo lungo")));
             }
             if !seen_tokens.insert(next.clone()) {
-                return Err(error("paginazione S3 non valida"));
+                return Err(error(tr(
+                    "invalid S3 pagination",
+                    "paginazione S3 non valida",
+                )));
             }
             token = Some(next);
         }
@@ -474,9 +570,10 @@ impl RemoteStore for S3 {
             if self.get(id)? == bytes {
                 return Ok(());
             }
-            return Err(error(
+            return Err(error(tr(
+                "S3 contains a different copy with the same identifier: no file was overwritten",
                 "S3 contiene una copia diversa con lo stesso identificativo: nessun file è stato sovrascritto",
-            ));
+            )));
         }
         check_status(status)
     }
@@ -498,29 +595,42 @@ impl RemoteStore for S3 {
 fn check_status(status: u16) -> Result<()> {
     match status {
         200..=299 => Ok(()),
-        401 | 403 => Err(error(
+        401 | 403 => Err(error(tr(
+            "S3 access denied: check credentials, IAM permissions, and session token expiration",
             "accesso S3 negato: verifica credenziali, permessi IAM e scadenza dell'eventuale session token",
-        )),
-        301 | 307 | 400 => Err(error(
-            "S3 ha rifiutato la richiesta: verifica regione e nome del bucket",
-        )),
-        404 => Err(error("bucket o copia S3 non disponibile")),
-        _ => Err(CloudError::Message(format!(
-            "S3 ha risposto con errore HTTP {status}; riproverò più tardi"
         ))),
+        301 | 307 | 400 => Err(error(tr(
+            "S3 rejected the request: check the region and bucket name",
+            "S3 ha rifiutato la richiesta: verifica regione e nome del bucket",
+        ))),
+        404 => Err(error(tr(
+            "S3 bucket or copy unavailable",
+            "bucket o copia S3 non disponibile",
+        ))),
+        _ => Err(CloudError::Message(if is_italian() {
+            format!("S3 ha risposto con errore HTTP {status}; riproverò più tardi")
+        } else {
+            format!("S3 returned HTTP error {status}; will retry later")
+        })),
     }
 }
 fn parse_response(mut bytes: Vec<u8>) -> Result<(u16, Vec<u8>)> {
     if bytes.len() < 4 || bytes[bytes.len() - 4] != b'\n' {
-        return Err(error("risposta S3 incompleta"));
+        return Err(error(tr(
+            "incomplete S3 response",
+            "risposta S3 incompleta",
+        )));
     }
     let status = std::str::from_utf8(&bytes[bytes.len() - 3..])
         .ok()
         .and_then(|s| s.parse::<u16>().ok())
-        .ok_or_else(|| error("risposta HTTP non valida"))?;
+        .ok_or_else(|| error(tr("invalid HTTP response", "risposta HTTP non valida")))?;
     bytes.truncate(bytes.len() - 4);
     if bytes.len() as u64 > history::MAX_SNAPSHOT_BYTES {
-        return Err(error("risposta S3 troppo grande"));
+        return Err(error(tr(
+            "S3 response too large",
+            "risposta S3 troppo grande",
+        )));
     }
     Ok((status, bytes))
 }
@@ -564,7 +674,12 @@ struct Object {
     size: u64,
 }
 fn parse_listing(bytes: &[u8]) -> Result<Listing> {
-    quick_xml::de::from_reader(bytes).map_err(|_| error("elenco delle copie S3 non valido"))
+    quick_xml::de::from_reader(bytes).map_err(|_| {
+        error(tr(
+            "invalid S3 copy listing",
+            "elenco delle copie S3 non valido",
+        ))
+    })
 }
 
 #[cfg(test)]
